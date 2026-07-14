@@ -1,7 +1,7 @@
 # Implementation Plan: GitHub Release and npm publication
 
 **Created**: 2026-07-14
-**Status**: Implemented (release tag pending)
+**Status**: Implemented
 **Model**: GPT-5 Codex, high reasoning effort
 **Implemented by**: GPT-5 Codex, high reasoning effort
 
@@ -72,11 +72,28 @@ Implementation note: all 30 focused release tests pass, both workflow YAML files
 - [x] Verify npm bootstrap authorization without creating the release tag.
 - [x] Mark implemented local work complete and report any remaining external prerequisite.
 
-Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub reports a public repository with default branch `master`; Environment `npm` has no approval and one deployment policy, tag `v*`. The locally stored granular token authenticates as `maximtop`, grants the required `@maximtop` scope access, and is provisioned as the Environment secret `NPM_TOKEN`. No release tag was created.
+Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub reports a public repository with default branch `master`; Environment `npm` has no approval and normally permits only tag `v*`. The locally stored granular token authenticates as `maximtop`, grants the required `@maximtop` scope access, and is provisioned as the Environment secret `NPM_TOKEN`. Tag `v0.1.0` was created only after these prerequisites and hosted CI passed.
+
+### [x] Task 6: Add immutable-tag release recovery
+
+**Files:**
+- Modify: `.github/workflows/release.yml`
+- Modify: `tests/unit/release-workflow.test.ts`
+- Modify: `tests/unit/documentation.test.ts`
+- Modify: `CONTRIBUTING.md`
+
+- [x] Publish local tarballs through an explicit `./release/...` path so npm cannot parse the path as GitHub shorthand.
+- [x] Add an explicit manual tag input that checks out and verifies the immutable tag commit.
+- [x] Reuse and validate the existing GitHub Release tarball and checksum rather than rebuilding a potentially different archive.
+- [x] Require an existing complete Release for recovery and preserve registry collision checks.
+- [x] Document the temporary `master` Environment policy and exact recovery command.
+- [x] Add regression coverage and execute the exact recovery and tarball publish shell paths locally.
+
+Implementation note: the first `v0.1.0` run completed preparation and GitHub Release creation, then npm interpreted `release/<tarball>.tgz` as GitHub shorthand. The targeted path fix and guarded manual recovery preserve the original tag and Release assets.
 
 ## Constraints
 
 - Preserve `master` as the main branch.
 - Do not add GitHub Packages, Pages, a second release workflow, or a changelog.
 - Do not rebuild the package after `prepare`.
-- Do not create or push `v0.1.0` until the scoped package-name change is committed and hosted CI passes.
+- Never move or reuse a release tag; recover workflow-only failures through the explicit manual path.

@@ -1,7 +1,7 @@
 # Specification: GitHub Release and npm publication
 
 **Created**: 2026-07-14
-**Status**: Implemented (release tag pending)
+**Status**: Implemented
 **Implemented by**: GPT-5 Codex, high reasoning effort
 **Source**: User-provided release and deployment plan
 
@@ -21,7 +21,7 @@ Publish `@maximtop/opencode-debug-mode` from one tag-triggered GitHub Actions wo
 
 ## Workflow requirements
 
-The workflow `.github/workflows/release.yml` runs only for tags matching `v*` and has this dependency chain:
+The workflow `.github/workflows/release.yml` runs automatically for tags matching `v*` and accepts an explicit manual tag input only to recover or retry an existing immutable release. Both paths have this dependency chain:
 
 `prepare -> create-github-release -> publish-npm`
 
@@ -40,6 +40,7 @@ The workflow `.github/workflows/release.yml` runs only for tags matching `v*` an
 - Mark beta and rc releases as prereleases.
 - Grant only `contents: write`.
 - On rerun, accept an existing non-draft release only when its tag, prerelease state, tarball, and checksum match the prepared artifact.
+- A manual recovery requires the existing Release and both assets; it never creates or repairs a Release.
 
 ### npm publication
 
@@ -57,6 +58,7 @@ The workflow `.github/workflows/release.yml` runs only for tags matching `v*` an
 - Document the exact maintainer release procedure and bootstrap-to-OIDC transition in `CONTRIBUTING.md`.
 - Prevent ordinary CI from running on tag pushes while preserving branch pushes and pull requests.
 - Use release-level concurrency keyed by the tag and do not cancel an in-progress release.
+- For a manual recovery, check out the requested tag rather than `master`, verify that `HEAD` equals the tag commit, and reuse the tarball and checksum already verified and attached to the existing GitHub Release. Reconstruct and verify the manifest before upload to the recovery run. If Environment `npm` normally permits only `v*` tags, a narrowly scoped `master` branch policy may exist only for the duration of the manual run and must be removed afterward.
 
 ## Failure behavior
 
@@ -74,4 +76,4 @@ The workflow `.github/workflows/release.yml` runs only for tags matching `v*` an
 
 ## Implementation status
 
-The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and locally verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` allows only `v*` tags without approval. A locally validated granular token with read/write access to the `@maximtop` scope is stored as the Environment secret `NPM_TOKEN`. The release tag remains intentionally uncreated until the scoped package-name change is committed and hosted CI passes.
+The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` normally allows only `v*` tags without approval. A granular token with read/write access to the `@maximtop` scope is stored as the temporary Environment secret `NPM_TOKEN`. Release tags are immutable; a workflow-only failure after Release creation is recovered through the guarded manual path without moving the tag or replacing its assets.

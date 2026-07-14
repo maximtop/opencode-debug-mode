@@ -3,12 +3,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to retry
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -19,18 +25,26 @@ jobs:
       version: ${{ steps.metadata.outputs.version }}
       npm_tag: ${{ steps.metadata.outputs.npm_tag }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
-      tarball: ${{ steps.pack.outputs.tarball }}
-      checksum_filename: ${{ steps.pack.outputs.checksum_filename }}
+      tarball: ${{ steps.pack.outputs.tarball || steps.recover.outputs.tarball }}
+      checksum_filename: ${{ steps.pack.outputs.checksum_filename || steps.recover.outputs.checksum_filename }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - name: Verify the tagged commit belongs to master
         shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
-          tagged_commit="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          tagged_commit="$(git rev-parse --verify "refs/tags/${TAG}^{commit}")"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [[ "$checked_out_commit" != "$tagged_commit" ]]; then
+            echo "::error::Checked out commit $checked_out_commit does not match tag $TAG at $tagged_commit" >&2
+            exit 1
+          fi
           if ! git merge-base --is-ancestor "$tagged_commit" refs/remotes/origin/master; then
             echo "::error::Tagged commit $tagged_commit is not reachable from master" >&2
             exit 1
@@ -42,18 +56,22 @@ jobs:
       - name: Validate release metadata
         id: metadata
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: node scripts/release-metadata.ts metadata "$TAG"
-      - run: npm ci
-      - run: npm run check
-      - run: npm run test:e2e
+      - if: github.event_name != 'workflow_dispatch'
+        run: npm ci
+      - if: github.event_name != 'workflow_dispatch'
+        run: npm run check
+      - if: github.event_name != 'workflow_dispatch'
+        run: npm run test:e2e
       - name: Pack release artifact
+        if: github.event_name != 'workflow_dispatch'
         id: pack
         shell: bash
         env:
           PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           NPM_TAG: ${{ steps.metadata.outputs.npm_tag }}
           PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
         run: |
@@ -110,6 +128,81 @@ jobs:
           await appendFile(GITHUB_OUTPUT, `tarball=${packed.filename}\nchecksum_filename=${checksumFilename}\n`)
           await rm("release/pack.json")
           NODE
+      - name: Recover prepared package from existing GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        id: recover
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          TAG: ${{ inputs.tag }}
+          NPM_TAG: ${{ steps.metadata.outputs.npm_tag }}
+          PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          mkdir release
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release \
+            --pattern '*.tgz' \
+            --pattern '*.sha256'
+
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process"
+          import { createHash } from "node:crypto"
+          import { appendFile, readFile, readdir, writeFile } from "node:fs/promises"
+          import { join } from "node:path"
+
+          const entries = await readdir("release")
+          const tarballs = entries.filter((entry) => entry.endsWith(".tgz"))
+          const checksums = entries.filter((entry) => entry.endsWith(".sha256"))
+          if (tarballs.length !== 1 || checksums.length !== 1) {
+            throw new Error("Existing GitHub Release must contain exactly one tarball and checksum")
+          }
+
+          const filename = tarballs[0]
+          const checksumFilename = checksums[0]
+          if (checksumFilename !== `${filename}.sha256`) {
+            throw new Error("Existing GitHub Release checksum filename does not match the tarball")
+          }
+
+          const tarball = await readFile(join("release", filename))
+          const shasum = createHash("sha1").update(tarball).digest("hex")
+          const sha256 = createHash("sha256").update(tarball).digest("hex")
+          const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`
+          const checksum = await readFile(join("release", checksumFilename), "utf8")
+          if (checksum !== `${sha256}  ${filename}\n`) {
+            throw new Error("Existing GitHub Release checksum does not match the tarball")
+          }
+
+          const packageJson = JSON.parse(
+            execFileSync("tar", ["-xOf", join("release", filename), "package/package.json"], { encoding: "utf8" }),
+          )
+          const { PACKAGE_NAME, VERSION, TAG, NPM_TAG, PRERELEASE, GITHUB_OUTPUT } = process.env
+          if (!PACKAGE_NAME || !VERSION || !TAG || !NPM_TAG || !PRERELEASE || !GITHUB_OUTPUT) {
+            throw new Error("Recovery metadata or GITHUB_OUTPUT is missing")
+          }
+          if (packageJson.name !== PACKAGE_NAME || packageJson.version !== VERSION) {
+            throw new Error(`Release asset ${packageJson.name}@${packageJson.version} does not match ${PACKAGE_NAME}@${VERSION}`)
+          }
+
+          const manifest = {
+            schemaVersion: 1,
+            packageName: PACKAGE_NAME,
+            version: VERSION,
+            tag: TAG,
+            npmTag: NPM_TAG,
+            prerelease: PRERELEASE === "true",
+            filename,
+            checksumFilename,
+            integrity,
+            shasum,
+            sha256,
+          }
+          await writeFile("release/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`)
+          await appendFile(GITHUB_OUTPUT, `tarball=${filename}\nchecksum_filename=${checksumFilename}\n`)
+          NODE
       - name: Upload prepared package
         uses: actions/upload-artifact@v7
         with:
@@ -137,7 +230,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          RECOVERY: ${{ github.event_name == 'workflow_dispatch' }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           TARBALL: ${{ needs.prepare.outputs.tarball }}
           CHECKSUM_FILENAME: ${{ needs.prepare.outputs.checksum_filename }}
@@ -174,10 +268,18 @@ jobs:
           process.exit(release.assets.some((asset) => asset.name === process.env.ASSET_NAME) ? 0 : 1)
           NODE
               then
+                if [[ "$RECOVERY" == "true" ]]; then
+                  echo "::error::Existing GitHub Release is missing required asset $asset" >&2
+                  exit 1
+                fi
                 gh release upload "$TAG" "release/$asset" --repo "$GITHUB_REPOSITORY"
               fi
             done
           elif grep -q "HTTP 404" release-error.log; then
+            if [[ "$RECOVERY" == "true" ]]; then
+              echo "::error::Manual recovery requires an existing GitHub Release for $TAG" >&2
+              exit 1
+            fi
             release_args=(
               "$TAG"
               --repo "$GITHUB_REPOSITORY"
@@ -229,7 +331,7 @@ jobs:
         env:
           PACKAGE_NAME: ${{ needs.prepare.outputs.package_name }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           TARBALL: ${{ needs.prepare.outputs.tarball }}
@@ -309,4 +411,4 @@ jobs:
             exit "$view_status"
           fi
 
-          npm publish "release/$TARBALL" --access public --tag "$NPM_TAG" --provenance
+          npm publish "./release/$TARBALL" --access public --tag "$NPM_TAG" --provenance

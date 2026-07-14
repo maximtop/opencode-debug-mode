@@ -35,6 +35,8 @@ describe("open-source documentation", () => {
     expect(contributing).toContain("`next`")
     expect(contributing).toContain("Trusted Publisher")
     expect(contributing).toContain("NPM_TOKEN")
+    expect(contributing).toContain("gh workflow run release.yml --ref master -f tag=vX.Y.Z")
+    expect(contributing).toContain("Keep the temporary `master` policy until the complete run succeeds")
   })
 
   it("uses Node.js 24 actions without a redundant Node.js version matrix", async () => {
