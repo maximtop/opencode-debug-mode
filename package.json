@@ -1,0 +1,67 @@
+{
+  "name": "opencode-debug-mode",
+  "version": "0.1.0",
+  "description": "Hypothesis-driven runtime debugging agent for OpenCode",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "assets",
+    "docs",
+    "examples",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "ATTRIBUTION.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.17.0 <2"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "zod": "^4.4.3"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@opencode-ai/plugin": "^1.17.19",
+    "@types/node": "^20.19.25",
+    "@vitest/coverage-v8": "^4.1.10",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "coverage": "npm run build && vitest run --coverage",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run test:integration"
+  },
+  "keywords": [
+    "opencode",
+    "debugging",
+    "agent",
+    "runtime",
+    "observability"
+  ]
+}

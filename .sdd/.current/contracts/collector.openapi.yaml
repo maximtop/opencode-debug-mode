@@ -1,0 +1,321 @@
+openapi: 3.0.3
+info:
+  title: OpenCode Debug Mode Loopback Collector
+  version: 1.0.0
+  description: >-
+    Ephemeral, session-scoped HTTP surface used only for authenticated debug-event
+    ingestion and minimal health checks. The server binds to a loopback address;
+    evidence reading and deletion are plugin-tool operations and are intentionally
+    absent from this contract.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: "0"
+        description: Random port selected by the operating system at runtime.
+security:
+  - bearerAuth: []
+paths:
+  /v1/events:
+    options:
+      summary: Browser ingestion preflight
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/RequestMethod"
+        - $ref: "#/components/parameters/RequestHeaders"
+      responses:
+        "204":
+          description: Preflight accepted for POST with Authorization and Content-Type.
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+                enum: [POST]
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: Authorization, Content-Type
+            Access-Control-Max-Age:
+              schema:
+                type: integer
+                maximum: 600
+            Vary:
+              schema:
+                type: string
+                enum: [Origin]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    post:
+      summary: Ingest one bounded event batch
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventBatch"
+      responses:
+        "202":
+          description: Valid events were persisted or deliberately sampled.
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+            Vary:
+              schema:
+                type: string
+                enum: [Origin]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/LimitExceeded"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/LimitExceeded"
+  /v1/health:
+    get:
+      summary: Read minimal authenticated collector health
+      responses:
+        "200":
+          description: Collector is accepting ingestion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: 256-bit opaque token
+  parameters:
+    Origin:
+      name: Origin
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 2048
+    RequestMethod:
+      name: Access-Control-Request-Method
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: [POST]
+    RequestHeaders:
+      name: Access-Control-Request-Headers
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 256
+        description: Case-insensitive comma-separated subset of Authorization and Content-Type.
+  schemas:
+    OpaqueId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "^[A-Za-z0-9_-]+$"
+    RunLabel:
+      type: string
+      enum: [pre-fix, post-fix]
+    SourceLocation:
+      type: object
+      additionalProperties: false
+      required: [file, line]
+      properties:
+        file:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: Project-relative source reference registered for the probe.
+        line:
+          type: integer
+          minimum: 1
+        column:
+          type: integer
+          minimum: 1
+    EventInput:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - sessionId
+        - runId
+        - runLabel
+        - hypothesisId
+        - probeId
+        - timestamp
+        - message
+        - source
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        sessionId:
+          $ref: "#/components/schemas/OpaqueId"
+        runId:
+          $ref: "#/components/schemas/OpaqueId"
+        runLabel:
+          $ref: "#/components/schemas/RunLabel"
+        hypothesisId:
+          $ref: "#/components/schemas/OpaqueId"
+        probeId:
+          $ref: "#/components/schemas/OpaqueId"
+        timestamp:
+          type: string
+          format: date-time
+        message:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        source:
+          $ref: "#/components/schemas/SourceLocation"
+        data:
+          description: Untrusted JSON value sanitized before persistence.
+          nullable: true
+    EventBatch:
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EventInput"
+      description: Serialized request body MUST NOT exceed 65536 bytes.
+    IngestResult:
+      type: object
+      additionalProperties: false
+      required: [ok, accepted, sampled, dropped]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        accepted:
+          type: integer
+          minimum: 0
+        sampled:
+          type: integer
+          minimum: 0
+        dropped:
+          type: integer
+          minimum: 0
+    HealthResult:
+      type: object
+      additionalProperties: false
+      required: [ok, status]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready, draining]
+      description: Deliberately omits session identifiers, paths, ports, counters, and evidence.
+    ErrorResult:
+      type: object
+      additionalProperties: false
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_REQUEST
+                - UNAUTHORIZED
+                - NOT_FOUND
+                - METHOD_NOT_ALLOWED
+                - UNSUPPORTED_MEDIA_TYPE
+                - LIMIT_EXCEEDED
+                - COLLECTOR_DRAINING
+            message:
+              type: string
+              maxLength: 256
+            retryable:
+              type: boolean
+            limit:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  enum: [requestBytes, scalarBytes, events, evidenceBytes]
+                maximum:
+                  type: integer
+                  minimum: 0
+  responses:
+    BadRequest:
+      description: Malformed preflight, JSON, event, or registered-ID mismatch.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
+    Unauthorized:
+      description: Missing or invalid bearer token; response reveals no session existence.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
+    NotFound:
+      description: Unknown route; response reveals no session, probe, or artifact existence.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
+    MethodNotAllowed:
+      description: Route exists but the method is not allowed.
+      headers:
+        Allow:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
+    UnsupportedMediaType:
+      description: Ingestion requires application/json.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
+    LimitExceeded:
+      description: A request, field, event-count, rate, or evidence-size limit was reached.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResult"
