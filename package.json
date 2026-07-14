@@ -3,6 +3,19 @@
   "version": "0.1.0",
   "description": "Hypothesis-driven runtime debugging agent for OpenCode",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maximtop/opencode-debug-mode.git"
+  },
+  "homepage": "https://github.com/maximtop/opencode-debug-mode#readme",
+  "bugs": {
+    "url": "https://github.com/maximtop/opencode-debug-mode/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -10,5 +10,18 @@ describe("package metadata", () => {
     expect(pkg.peerDependencies["@opencode-ai/plugin"]).toBe(">=1.17.0 <2")
     expect(pkg.exports["."].import).toBe("./dist/index.js")
     expect(pkg.files).toEqual(expect.arrayContaining(["dist", "assets", "README.md", "LICENSE"]))
+    expect(pkg.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/maximtop/opencode-debug-mode.git",
+    })
+    expect(pkg.homepage).toBe("https://github.com/maximtop/opencode-debug-mode#readme")
+    expect(pkg.bugs).toEqual({
+      url: "https://github.com/maximtop/opencode-debug-mode/issues",
+    })
+    expect(pkg.publishConfig).toEqual({
+      access: "public",
+      registry: "https://registry.npmjs.org/",
+      provenance: true,
+    })
   })
 })

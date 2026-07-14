@@ -10,7 +10,13 @@
 
 ## Install
 
-Install the package in the environment where OpenCode resolves plugins, then add its npm name to the normal OpenCode configuration:
+Install the package from the public npm registry in the environment where OpenCode resolves plugins:
+
+```sh
+npm install opencode-debug-mode
+```
+
+Then add its npm name to the normal OpenCode configuration:
 
 ```json
 {

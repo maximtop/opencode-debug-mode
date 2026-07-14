@@ -1,0 +1,312 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.metadata.outputs.package_name }}
+      version: ${{ steps.metadata.outputs.version }}
+      npm_tag: ${{ steps.metadata.outputs.npm_tag }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      checksum_filename: ${{ steps.pack.outputs.checksum_filename }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify the tagged commit belongs to master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          tagged_commit="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          if ! git merge-base --is-ancestor "$tagged_commit" refs/remotes/origin/master; then
+            echo "::error::Tagged commit $tagged_commit is not reachable from master" >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Validate release metadata
+        id: metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release-metadata.ts metadata "$TAG"
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:e2e
+      - name: Pack release artifact
+        id: pack
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          NPM_TAG: ${{ steps.metadata.outputs.npm_tag }}
+          PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          mkdir release
+          npm pack --json --pack-destination release > release/pack.json
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile, rm, writeFile } from "node:fs/promises"
+          import { createHash } from "node:crypto"
+          import { basename, join } from "node:path"
+
+          const packResult = JSON.parse(await readFile("release/pack.json", "utf8"))
+          if (!Array.isArray(packResult) || packResult.length !== 1) {
+            throw new Error("npm pack must produce exactly one package")
+          }
+
+          const packed = packResult[0]
+          const { PACKAGE_NAME, VERSION, TAG, NPM_TAG, PRERELEASE, GITHUB_OUTPUT } = process.env
+          if (!PACKAGE_NAME || !VERSION || !TAG || !NPM_TAG || !PRERELEASE || !GITHUB_OUTPUT) {
+            throw new Error("Release metadata or GITHUB_OUTPUT is missing")
+          }
+          if (packed.name !== PACKAGE_NAME || packed.version !== VERSION) {
+            throw new Error(`Packed ${packed.name}@${packed.version}, expected ${PACKAGE_NAME}@${VERSION}`)
+          }
+          if (typeof packed.filename !== "string" || basename(packed.filename) !== packed.filename) {
+            throw new Error("npm pack returned an unsafe filename")
+          }
+
+          const tarballPath = join("release", packed.filename)
+          const tarball = await readFile(tarballPath)
+          const sha1 = createHash("sha1").update(tarball).digest("hex")
+          const sha256 = createHash("sha256").update(tarball).digest("hex")
+          const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`
+          if (packed.shasum !== sha1 || packed.integrity !== integrity) {
+            throw new Error("npm pack integrity does not match the packed tarball")
+          }
+
+          const checksumFilename = `${packed.filename}.sha256`
+          const manifest = {
+            schemaVersion: 1,
+            packageName: PACKAGE_NAME,
+            version: VERSION,
+            tag: TAG,
+            npmTag: NPM_TAG,
+            prerelease: PRERELEASE === "true",
+            filename: packed.filename,
+            checksumFilename,
+            integrity,
+            shasum: sha1,
+            sha256,
+          }
+          await writeFile("release/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`)
+          await writeFile(join("release", checksumFilename), `${sha256}  ${packed.filename}\n`)
+          await appendFile(GITHUB_OUTPUT, `tarball=${packed.filename}\nchecksum_filename=${checksumFilename}\n`)
+          await rm("release/pack.json")
+          NODE
+      - name: Upload prepared package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-package
+          path: |
+            release/*.tgz
+            release/*.sha256
+            release/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  create-github-release:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-package
+          path: release
+      - name: Create or verify GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          TARBALL: ${{ needs.prepare.outputs.tarball }}
+          CHECKSUM_FILENAME: ${{ needs.prepare.outputs.checksum_filename }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum --check "$CHECKSUM_FILENAME")
+
+          set +e
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json 2> release-error.log
+          api_status=$?
+          set -e
+
+          if (( api_status == 0 )); then
+            RELEASE_JSON="$(pwd)/release.json" TAG="$TAG" PRERELEASE="$PRERELEASE" node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises"
+
+          const release = JSON.parse(await readFile(process.env.RELEASE_JSON, "utf8"))
+          if (release.tag_name !== process.env.TAG) {
+            throw new Error(`Existing release tag ${release.tag_name} does not match ${process.env.TAG}`)
+          }
+          if (release.draft !== false) {
+            throw new Error("Existing release is a draft")
+          }
+          if (String(release.prerelease) !== process.env.PRERELEASE) {
+            throw new Error("Existing release prerelease state does not match the prepared package")
+          }
+          NODE
+
+            for asset in "$TARBALL" "$CHECKSUM_FILENAME"; do
+              if ! RELEASE_JSON="$(pwd)/release.json" ASSET_NAME="$asset" node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises"
+
+          const release = JSON.parse(await readFile(process.env.RELEASE_JSON, "utf8"))
+          process.exit(release.assets.some((asset) => asset.name === process.env.ASSET_NAME) ? 0 : 1)
+          NODE
+              then
+                gh release upload "$TAG" "release/$asset" --repo "$GITHUB_REPOSITORY"
+              fi
+            done
+          elif grep -q "HTTP 404" release-error.log; then
+            release_args=(
+              "$TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --verify-tag
+              --title "$TAG"
+              --generate-notes
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              release_args+=(--prerelease)
+            fi
+            release_args+=("release/$TARBALL" "release/$CHECKSUM_FILENAME")
+            gh release create "${release_args[@]}"
+          else
+            cat release-error.log >&2
+            exit "$api_status"
+          fi
+
+          mkdir downloaded-release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded-release-assets --pattern "$TARBALL"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded-release-assets --pattern "$CHECKSUM_FILENAME"
+          if ! cmp --silent "release/$TARBALL" "downloaded-release-assets/$TARBALL"; then
+            echo "::error::Existing GitHub Release tarball collision" >&2
+            exit 1
+          fi
+          if ! cmp --silent "release/$CHECKSUM_FILENAME" "downloaded-release-assets/$CHECKSUM_FILENAME"; then
+            echo "::error::Existing GitHub Release checksum collision" >&2
+            exit 1
+          fi
+
+  publish-npm:
+    needs: [prepare, create-github-release]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org/
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-package
+          path: release
+      - name: Verify prepared package and npm CLI
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ needs.prepare.outputs.package_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          TARBALL: ${{ needs.prepare.outputs.tarball }}
+          CHECKSUM_FILENAME: ${{ needs.prepare.outputs.checksum_filename }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum --check "$CHECKSUM_FILENAME")
+          npm_version="$(npm --version)"
+          node --input-type=module - "$npm_version" <<'NODE'
+          const version = process.argv[2]
+          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+          if (!match) {
+            throw new Error(`Invalid npm version: ${version}`)
+          }
+          const [major, minor, patch] = match.slice(1).map(Number)
+          if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) {
+            throw new Error(`npm 11.5.1 or newer is required; found ${version}`)
+          }
+          NODE
+
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto"
+          import { readFile } from "node:fs/promises"
+
+          const manifest = JSON.parse(await readFile("release/manifest.json", "utf8"))
+          const expected = {
+            packageName: process.env.PACKAGE_NAME,
+            version: process.env.VERSION,
+            tag: process.env.TAG,
+            npmTag: process.env.NPM_TAG,
+            prerelease: process.env.PRERELEASE === "true",
+            filename: process.env.TARBALL,
+            checksumFilename: process.env.CHECKSUM_FILENAME,
+          }
+          for (const [key, value] of Object.entries(expected)) {
+            if (manifest[key] !== value) {
+              throw new Error(`Release manifest ${key} does not match the workflow metadata`)
+            }
+          }
+
+          const tarball = await readFile(`release/${manifest.filename}`)
+          const sha256 = createHash("sha256").update(tarball).digest("hex")
+          const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`
+          if (manifest.sha256 !== sha256 || manifest.integrity !== integrity) {
+            throw new Error("Release manifest integrity does not match the prepared tarball")
+          }
+          NODE
+      - name: Publish prepared package to npm
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME: ${{ needs.prepare.outputs.package_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}
+          TARBALL: ${{ needs.prepare.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          local_integrity="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; console.log(JSON.parse(readFileSync("release/manifest.json", "utf8")).integrity)')"
+
+          set +e
+          registry_output="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity --json --registry=https://registry.npmjs.org/ 2> npm-view-error.log)"
+          view_status=$?
+          set -e
+
+          if (( view_status == 0 )); then
+            registry_integrity="$(REGISTRY_OUTPUT="$registry_output" node --input-type=module -e 'const value = JSON.parse(process.env.REGISTRY_OUTPUT); if (typeof value !== "string") throw new Error("Registry returned no integrity"); process.stdout.write(value)')"
+            if [[ "$registry_integrity" == "$local_integrity" ]]; then
+              echo "$PACKAGE_NAME@$VERSION is already published with the prepared integrity"
+              exit 0
+            fi
+            echo "::error::npm integrity collision for $PACKAGE_NAME@$VERSION" >&2
+            exit 1
+          fi
+
+          if ! grep -q "E404" npm-view-error.log; then
+            cat npm-view-error.log >&2
+            exit "$view_status"
+          fi
+
+          npm publish "release/$TARBALL" --access public --tag "$NPM_TAG" --provenance
