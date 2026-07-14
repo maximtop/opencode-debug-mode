@@ -30,6 +30,14 @@ describe("manifest store", () => {
       const updated = await store.update(0, (value) => ({ ...value, status: "cleaning" }))
       expect(updated.revision).toBe(1)
       await expect(store.update(0, (value) => value)).rejects.toMatchObject({ code: "STALE_REVISION" })
+      await Promise.all([
+        store.modify((value) => ({ ...value, status: "partial" })),
+        store.modify((value) => ({
+          ...value,
+          counters: { ...value.counters, accepted: value.counters.accepted + 1 },
+        })),
+      ])
+      expect(await store.read()).toMatchObject({ revision: 3, status: "partial", counters: { accepted: 1 } })
       const raw = await readFile(paths.manifestFile, "utf8")
       expect(raw).not.toMatch(/token|bearer|secretValue/i)
 

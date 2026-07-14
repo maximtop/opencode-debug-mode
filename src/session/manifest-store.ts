@@ -82,11 +82,22 @@ export class ManifestStore {
       if (current.revision !== expectedRevision) {
         throw new DebugModeError("STALE_REVISION", `Expected revision ${expectedRevision}; found ${current.revision}`)
       }
-      const next = ManifestSchema.parse({ ...mutate(structuredClone(current)), revision: expectedRevision + 1 })
-      await this.verifyPaths(next)
-      await atomicWriteJson(this.filename, next, MANIFEST_MAX_BYTES)
-      return next
+      return this.writeNext(current, mutate)
     })
+  }
+
+  async modify(mutate: (value: CleanupManifest) => CleanupManifest): Promise<CleanupManifest> {
+    return this.exclusive(async () => this.writeNext(await this.read(), mutate))
+  }
+
+  private async writeNext(
+    current: CleanupManifest,
+    mutate: (value: CleanupManifest) => CleanupManifest,
+  ): Promise<CleanupManifest> {
+    const next = ManifestSchema.parse({ ...mutate(structuredClone(current)), revision: current.revision + 1 })
+    await this.verifyPaths(next)
+    await atomicWriteJson(this.filename, next, MANIFEST_MAX_BYTES)
+    return next
   }
 
   private async verifyPaths(value: CleanupManifest): Promise<void> {

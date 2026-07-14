@@ -170,9 +170,9 @@ export class ProbeRegistry {
   }
 
   private async update(
-    manifest: CleanupManifest,
+    _manifest: CleanupManifest,
     mutate: (value: CleanupManifest) => CleanupManifest,
   ): Promise<CleanupManifest> {
-    return this.store.update(manifest.revision, mutate)
+    return this.store.modify(mutate)
   }
 }

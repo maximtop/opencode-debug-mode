@@ -77,6 +77,7 @@ export class ProcessService {
     let stderrEvents = 0
     let probeEvents = 0
     let writes: Promise<void> = Promise.resolve()
+    let startedUpdate: Promise<void> = Promise.resolve()
     let child: ChildProcess | undefined
     const processId = generatedId("process_")
     const ownerNonce = randomBytes(32).toString("base64url")
@@ -117,7 +118,7 @@ export class ProcessService {
         child?.on("message", (value: unknown) => {
           try {
             const message = parseChildMessage(value)
-            if (message.type === "started") void this.markStarted(processId, message.targetPid)
+            if (message.type === "started") startedUpdate = this.markStarted(processId, message.targetPid)
             if (message.type === "failure") reject(new DebugModeError("PROCESS_START_FAILED", message.message))
             if (message.type === "result") resolve(message)
           } catch {
@@ -164,6 +165,7 @@ export class ProcessService {
         }
       }
       await writes
+      await startedUpdate
       await this.markCompleted(processId, result)
       return {
         processId,
@@ -269,8 +271,7 @@ export class ProcessService {
   }
 
   private async updateManifest(mutate: (manifest: CleanupManifest) => CleanupManifest): Promise<void> {
-    const current = await this.dependencies.session.manifestStore.read()
-    await this.dependencies.session.manifestStore.update(current.revision, mutate)
+    await this.dependencies.session.manifestStore.modify(mutate)
   }
 
   private waitForMessage(child: ChildProcess, type: string, timeoutMs: number): Promise<void> {

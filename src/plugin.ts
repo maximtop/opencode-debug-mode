@@ -45,9 +45,8 @@ type SessionServices = {
   cleanup: CleanupService
 }
 
-async function updateManifest(session: DebugSession, mutate: Parameters<DebugSession["manifestStore"]["update"]>[1]) {
-  const current = await session.manifestStore.read()
-  return session.manifestStore.update(current.revision, mutate)
+async function updateManifest(session: DebugSession, mutate: Parameters<DebugSession["manifestStore"]["modify"]>[0]) {
+  return session.manifestStore.modify(mutate)
 }
 
 function terminalReport(outcome: "abandoned" | "escalated", reason: string): FinalReportInput {

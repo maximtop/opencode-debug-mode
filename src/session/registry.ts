@@ -146,9 +146,8 @@ export class SessionRegistry {
     if (session === undefined || session.publicId !== sessionValue.publicId) {
       throw new DebugModeError("SESSION_OWNERSHIP_MISMATCH", "Session is not owned by this registry")
     }
-    const current = await session.manifestStore.read()
     const now = this.clock.now()
-    await session.manifestStore.update(current.revision, (manifest) => ({
+    await session.manifestStore.modify((manifest) => ({
       ...manifest,
       lastActivityAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + LIMITS.idleMs).toISOString(),

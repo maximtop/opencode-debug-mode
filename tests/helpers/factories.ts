@@ -156,6 +156,7 @@ export async function createProcessServiceFixture() {
   })
   return {
     service,
+    session,
     runId: run.id,
     projectRoot,
     script: (name: string) => path.join(projectRoot, name),

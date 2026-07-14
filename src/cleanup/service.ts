@@ -49,14 +49,13 @@ export class CleanupService {
   }): Promise<CleanupResult> {
     const started = performance.now()
     const finalReport = FinalReportInputSchema.parse(input.finalReport)
-    const manifest = await this.session.manifestStore.read()
-    await this.session.manifestStore
-      .update(manifest.revision, (value) => ({
+    const manifest = await this.session.manifestStore
+      .modify((value) => ({
         ...value,
         status: "cleaning",
         cleanup: { status: "running", completedResources: [] },
       }))
-      .catch(() => undefined)
+      .catch(() => this.session.manifestStore.read())
     const state = await this.session.investigationStore.read().catch(() => undefined)
     if (state !== undefined) {
       await this.session.investigationStore

@@ -19,6 +19,11 @@ describe("process capture service", () => {
     expect(result.stderrEvents).toBeGreaterThan(0)
     expect(result.probeEvents).toBe(1)
     expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    const owned = (await fixture.session.manifestStore.read()).processes.find(
+      (candidate) => candidate.id === result.processId,
+    )
+    expect(owned).toMatchObject({ status: "exited", exitCode: 7 })
+    expect(owned?.targetPid).toBeTypeOf("number")
   })
 
   it("bounds long output, ignores malformed probe candidates, and reports timeouts", async () => {
