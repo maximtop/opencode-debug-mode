@@ -489,7 +489,7 @@ export async function createCleanupFixture(options: {
     options.keepArtifacts === true ? { keepArtifacts: true, retentionDestination } : {},
   )
   await writeFile(session.paths.evidenceFile, "")
-  const sourceFile = path.join(projectRoot, "example.ts")
+  const sourceFile = path.join(projectRoot, "example.js")
   const markerStart = "/* DEBUG-START opencode-debug-mode session=session_A run=run_A hypothesis=hyp_A probe=probe_A */"
   const markerEnd = "/* DEBUG-END opencode-debug-mode session=session_A run=run_A hypothesis=hyp_A probe=probe_A */"
   const expectedBlock = `${markerStart}\nvoid 0\n${markerEnd}\n`
@@ -556,7 +556,7 @@ export async function createCleanupFixture(options: {
     decidingEvidence: [],
     hypotheses: [{ id: "hyp_A", status: "confirmed", statement: "Fixture" }],
     fix: "Fixture fix",
-    changedFiles: ["example.ts"],
+    changedFiles: ["example.js"],
     verification: ["Fixture verified"],
   }
   onTestFinished(async () => {

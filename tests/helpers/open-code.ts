@@ -1,25 +1,32 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
-import type { Config, Plugin } from "@opencode-ai/plugin"
 
 const execute = promisify(execFile)
+
+function npmCommand(args: string[]): [string, string[]] {
+  const npmEntry = process.env.npm_execpath
+  if (npmEntry !== undefined && npmEntry.length > 0) return [process.execPath, [npmEntry, ...args]]
+  return [process.platform === "win32" ? "npm.cmd" : "npm", args]
+}
 
 export async function installPackedPluginAndReadConfig(version: string): Promise<{
   agent: { debug: { mode: string } }
   command: { debug: { agent: string; template: string } }
 }> {
-  const packed = await execute("npm", ["pack", "--silent"], { cwd: process.cwd() })
-  const tarballName = packed.stdout.trim().split(/\r?\n/u).at(-1)
-  if (tarballName === undefined) throw new Error("npm pack returned no tarball")
-  const tarball = path.resolve(tarballName)
   const directory = await mkdtemp(path.join(tmpdir(), "opencode-debug-install-"))
   try {
+    const [packExecutable, packArgs] = npmCommand(["pack", "--silent", "--pack-destination", directory])
+    const packed = await execute(packExecutable, packArgs, { cwd: process.cwd() })
+    const tarballName = packed.stdout.trim().split(/\r?\n/u).at(-1)
+    if (tarballName === undefined) throw new Error("npm pack returned no tarball")
+    const tarball = path.resolve(directory, tarballName)
     await writeFile(path.join(directory, "package.json"), '{"private":true,"type":"module"}\n')
-    await execute("npm", ["install", tarball, `opencode-ai@${version}`], {
+    const [installExecutable, installArgs] = npmCommand(["install", tarball, `opencode-ai@${version}`])
+    await execute(installExecutable, installArgs, {
       cwd: directory,
       timeout: 120_000,
     })
@@ -34,32 +41,43 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
       ".bin",
       process.platform === "win32" ? "opencode.cmd" : "opencode",
     )
-    const listed = await execute(executable, ["agent", "list"], { cwd: directory, timeout: 120_000 })
-    if (!/(^|\s)debug(\s|$)/mu.test(listed.stdout)) {
-      throw new Error(`OpenCode did not load the debug agent: ${listed.stdout.slice(0, 1_000)}`)
+    const home = path.join(directory, "home")
+    const configHome = path.join(home, ".config")
+    await mkdir(configHome, { recursive: true })
+    const resolved = await execute(executable, ["debug", "config"], {
+      cwd: directory,
+      timeout: 120_000,
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CACHE_HOME: path.join(home, ".cache"),
+        XDG_CONFIG_HOME: configHome,
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+        OPENCODE_CONFIG_DIR: path.join(configHome, "opencode"),
+      },
+    })
+    let config: {
+      agent?: { debug?: { mode?: unknown } }
+      command?: { debug?: { agent?: unknown; template?: unknown } }
     }
-    const module = (await import(pathToFileURL(installedEntry).href)) as { DebugModePlugin: Plugin }
-    const hooks = await module.DebugModePlugin({
-      client: { app: { log: async () => ({}) } },
-      project: {} as never,
-      directory,
-      worktree: directory,
-      experimental_workspace: { register: () => undefined },
-      serverUrl: new URL("http://127.0.0.1"),
-      $: {} as never,
-    } as never)
-    const config: Config = {}
-    await hooks.config?.(config)
-    await hooks.dispose?.()
+    try {
+      config = JSON.parse(resolved.stdout) as typeof config
+    } catch {
+      throw new Error(`OpenCode returned invalid resolved config: ${resolved.stdout.slice(0, 1_000)}`)
+    }
     const agent = config.agent?.debug
     const command = config.command?.debug
-    if (agent === undefined || command === undefined) throw new Error("Debug definitions were not registered")
+    if (agent === undefined || command === undefined) {
+      throw new Error(
+        `OpenCode did not register debug definitions. stderr: ${resolved.stderr.slice(0, 2_000)} stdout: ${resolved.stdout.slice(0, 2_000)}`,
+      )
+    }
     return {
       agent: { debug: { mode: String(agent.mode) } },
       command: { debug: { agent: String(command.agent), template: String(command.template) } },
     }
   } finally {
     await rm(directory, { recursive: true, force: true })
-    await rm(tarball, { force: true })
   }
 }
