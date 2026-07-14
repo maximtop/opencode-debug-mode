@@ -1,13 +1,13 @@
 # Specification: GitHub Release and npm publication
 
 **Created**: 2026-07-14
-**Status**: Implemented (npm bootstrap pending)
+**Status**: Implemented (release tag pending)
 **Implemented by**: GPT-5 Codex, high reasoning effort
 **Source**: User-provided release and deployment plan
 
 ## Goal
 
-Publish `opencode-debug-mode` from one tag-triggered GitHub Actions workflow. A valid release tag must first pass the complete project verification, then create a GitHub Release, then publish the exact same packed tarball to the public npm registry.
+Publish `@maximtop/opencode-debug-mode` from one tag-triggered GitHub Actions workflow. A valid release tag must first pass the complete project verification, then create a GitHub Release, then publish the exact same packed tarball to the public npm registry.
 
 ## Release contract
 
@@ -48,7 +48,7 @@ The workflow `.github/workflows/release.yml` runs only for tags matching `v*` an
 - Require npm CLI version 11.5.1 or newer.
 - Publish the downloaded tarball without rebuilding it, using public access, the mapped dist-tag, and provenance.
 - Before publishing, query the registry. If that exact version already exists, treat matching manifest integrity as success and a different integrity as a collision error.
-- The bootstrap release may use the environment secret `NPM_TOKEN`; trusted publishing replaces it after the first successful release.
+- The bootstrap release may use the environment secret `NPM_TOKEN` with read/write access to the `@maximtop` scope; trusted publishing replaces it after the first successful release.
 
 ## Repository and documentation requirements
 
@@ -70,8 +70,8 @@ The workflow `.github/workflows/release.yml` runs only for tags matching `v*` an
 - Unit tests cover stable, beta, rc, version mismatch, missing `v`, unsupported suffix, malformed SemVer, and the minimum npm CLI version.
 - Static tests cover the tag trigger, job chain, Node.js 24 action versions, permissions, artifact reuse, provenance publish command, retry guards, and CI tag exclusion.
 - `npm run check`, `npm run test:e2e`, `npm pack --dry-run`, and `npm publish --dry-run` pass locally.
-- For the first real release, GitHub contains generated notes, the tarball, and checksum; the `npm` environment deployment succeeds; npm exposes version `0.1.0`; clean installation works; and provenance verifies.
+- For the first real release, GitHub contains generated notes, the tarball, and checksum; the `npm` environment deployment succeeds; npm exposes `@maximtop/opencode-debug-mode@0.1.0`; clean installation works; and provenance verifies.
 
 ## Implementation status
 
-The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and locally verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` allows only `v*` tags without approval. The release tag is intentionally not created because local npm authentication is unavailable and the Environment does not yet contain the temporary `NPM_TOKEN` required for the first publication.
+The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and locally verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` allows only `v*` tags without approval. A locally validated granular token with read/write access to the `@maximtop` scope is stored as the Environment secret `NPM_TOKEN`. The release tag remains intentionally uncreated until the scoped package-name change is committed and hosted CI passes.

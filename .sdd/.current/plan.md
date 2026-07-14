@@ -1,7 +1,7 @@
 # Implementation Plan: GitHub Release and npm publication
 
 **Created**: 2026-07-14
-**Status**: Implemented (npm bootstrap pending)
+**Status**: Implemented (release tag pending)
 **Model**: GPT-5 Codex, high reasoning effort
 **Implemented by**: GPT-5 Codex, high reasoning effort
 
@@ -44,7 +44,7 @@ Implementation note: the focused tests failed on the intentionally missing packa
 - [x] Document npm installation, the exact tag procedure, supported prerelease mappings, failure behavior, and bootstrap-to-trusted-publishing transition.
 - [x] Run focused metadata and documentation tests.
 
-Implementation note: npm confirmed the existing lockfile remains current because release-only package metadata is not serialized into its root dependency record. The focused metadata and release documentation tests pass.
+Implementation note: the package was later moved into the `@maximtop` npm scope so its bootstrap token can grant precise scope-level access. The lockfile root metadata, installation documentation, and packed-install E2E path were updated with the package name. The focused metadata and release documentation tests pass.
 
 ### [x] Task 4: Implement the release workflow
 
@@ -60,7 +60,7 @@ Implementation note: npm confirmed the existing lockfile remains current because
 
 Implementation note: all 30 focused release tests pass, both workflow YAML files parse, every generated shell block passes `bash -n`, and the exact pack step produced a tarball whose SHA-1, SHA-256, SHA-512 integrity, manifest, and checksum all verified locally.
 
-### [ ] Task 5: Verify and roll out prerequisites
+### [x] Task 5: Verify and roll out prerequisites
 
 **Files:**
 - Modify: `.sdd/.current/spec.md`
@@ -69,14 +69,14 @@ Implementation note: all 30 focused release tests pass, both workflow YAML files
 - [x] Run `npm run check` and `npm run test:e2e`.
 - [x] Run `npm pack --dry-run` and `npm publish --dry-run`.
 - [x] Make the GitHub repository public and configure Environment `npm` for protected `v*` tags.
-- [ ] Verify npm bootstrap authorization without creating the release tag.
+- [x] Verify npm bootstrap authorization without creating the release tag.
 - [x] Mark implemented local work complete and report any remaining external prerequisite.
 
-Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub now reports a public repository with default branch `master`; Environment `npm` has no approval and one deployment policy, tag `v*`. The remaining prerequisite is a seven-day granular `NPM_TOKEN`: local `npm whoami` returns `E401`, and the environment currently has no secrets. No release tag was created.
+Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub reports a public repository with default branch `master`; Environment `npm` has no approval and one deployment policy, tag `v*`. The locally stored granular token authenticates as `maximtop`, grants the required `@maximtop` scope access, and is provisioned as the Environment secret `NPM_TOKEN`. No release tag was created.
 
 ## Constraints
 
 - Preserve `master` as the main branch.
 - Do not add GitHub Packages, Pages, a second release workflow, or a changelog.
 - Do not rebuild the package after `prepare`.
-- Do not create or push `v0.1.0` until npm authentication is configured.
+- Do not create or push `v0.1.0` until the scoped package-name change is committed and hosted CI passes.

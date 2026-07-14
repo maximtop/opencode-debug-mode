@@ -1,6 +1,6 @@
 # opencode-debug-mode
 
-`opencode-debug-mode` is an explicit, hypothesis-driven runtime debugging agent for OpenCode. It registers a selectable `debug` primary agent, the `/debug` command, and a bounded structured tool surface for CLI, web, and browser-extension investigations.
+`@maximtop/opencode-debug-mode` is an explicit, hypothesis-driven runtime debugging agent for OpenCode. It registers a selectable `debug` primary agent, the `/debug` command, and a bounded structured tool surface for CLI, web, and browser-extension investigations.
 
 ## Requirements
 
@@ -13,14 +13,14 @@
 Install the package from the public npm registry in the environment where OpenCode resolves plugins:
 
 ```sh
-npm install opencode-debug-mode
+npm install @maximtop/opencode-debug-mode
 ```
 
 Then add its npm name to the normal OpenCode configuration:
 
 ```json
 {
-  "plugin": ["opencode-debug-mode"]
+  "plugin": ["@maximtop/opencode-debug-mode"]
 }
 ```
 
@@ -69,7 +69,7 @@ Generated probes target JavaScript and TypeScript only. The two transports are s
 
 ## Uninstall
 
-Finish or abandon active investigations so cleanup can run, remove `opencode-debug-mode` from the OpenCode `plugin` list, uninstall the npm package, and restart OpenCode.
+Finish or abandon active investigations so cleanup can run, remove `@maximtop/opencode-debug-mode` from the OpenCode `plugin` list, uninstall the npm package, and restart OpenCode.
 
 ## License
 

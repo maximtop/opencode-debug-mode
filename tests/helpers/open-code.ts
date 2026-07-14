@@ -31,7 +31,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
       cwd: directory,
       timeout: OPENCODE_INSTALL_TIMEOUT_MS,
     })
-    const installedEntry = path.join(directory, "node_modules", "opencode-debug-mode", "dist", "index.js")
+    const installedEntry = path.join(directory, "node_modules", "@maximtop", "opencode-debug-mode", "dist", "index.js")
     await writeFile(
       path.join(directory, "opencode.json"),
       `${JSON.stringify({ plugin: [pathToFileURL(installedEntry).href] }, null, 2)}\n`,

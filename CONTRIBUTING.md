@@ -43,6 +43,6 @@ The release workflow is safe to rerun. It accepts an existing GitHub Release onl
 
 ### First npm publication
 
-Before pushing the first tag, make the repository public and create the GitHub Environment `npm` without manual approval, restricted to protected tag pattern `v*`. Create a seven-day npm granular token with read/write access to all packages and bypass 2FA, then save it only as the environment secret `NPM_TOKEN`. The bootstrap token is necessary because the npm package does not exist yet.
+Before pushing the first tag, make the repository public and create the GitHub Environment `npm` without manual approval, restricted to protected tag pattern `v*`. Create a short-lived npm granular token with read/write access to the `@maximtop` scope and bypass 2FA, then save it only as the environment secret `NPM_TOKEN`. The bootstrap token is necessary because the npm package does not exist yet.
 
 After the first successful publication, configure an npm Trusted Publisher with user `maximtop`, repository `opencode-debug-mode`, workflow `release.yml`, environment `npm`, and permission `npm publish`. Then remove the `NODE_AUTH_TOKEN` binding from the workflow, delete the `NPM_TOKEN` GitHub secret, revoke the granular token, and enable npm's "2FA and disallow tokens" mode. Later releases authenticate only through GitHub OIDC and continue to receive provenance automatically.

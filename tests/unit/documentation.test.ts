@@ -25,7 +25,8 @@ describe("open-source documentation", () => {
     const readme = await readFile("README.md", "utf8")
     const contributing = await readFile("CONTRIBUTING.md", "utf8")
 
-    expect(readme).toContain("npm install opencode-debug-mode")
+    expect(readme).toContain("npm install @maximtop/opencode-debug-mode")
+    expect(readme).toContain('"plugin": ["@maximtop/opencode-debug-mode"]')
     expect(contributing).toContain("npm version patch --no-git-tag-version")
     expect(contributing).toContain('git tag -a vX.Y.Z -m "vX.Y.Z"')
     expect(contributing).toContain("git push origin vX.Y.Z")
