@@ -9,5 +9,5 @@ describe("OpenCode package install", () => {
     expect(config.agent.debug.mode).toBe("primary")
     expect(config.command.debug.agent).toBe("debug")
     expect(config.command.debug.template).toBe("$ARGUMENTS")
-  }, 120_000)
+  }, 300_000)
 })

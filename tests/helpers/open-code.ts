@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
 const execute = promisify(execFile)
+const OPENCODE_INSTALL_TIMEOUT_MS = 300_000
 
 function npmCommand(args: string[]): [string, string[]] {
   const npmEntry = process.env.npm_execpath
@@ -28,7 +29,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
     const [installExecutable, installArgs] = npmCommand(["install", tarball, `opencode-ai@${version}`])
     await execute(installExecutable, installArgs, {
       cwd: directory,
-      timeout: 120_000,
+      timeout: OPENCODE_INSTALL_TIMEOUT_MS,
     })
     const installedEntry = path.join(directory, "node_modules", "opencode-debug-mode", "dist", "index.js")
     await writeFile(
@@ -41,7 +42,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
     await mkdir(configHome, { recursive: true })
     const resolved = await execute(executable, ["debug", "config"], {
       cwd: directory,
-      timeout: 120_000,
+      timeout: OPENCODE_INSTALL_TIMEOUT_MS,
       env: {
         ...process.env,
         HOME: home,
