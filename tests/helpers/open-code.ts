@@ -35,12 +35,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
       path.join(directory, "opencode.json"),
       `${JSON.stringify({ plugin: [pathToFileURL(installedEntry).href] }, null, 2)}\n`,
     )
-    const executable = path.join(
-      directory,
-      "node_modules",
-      ".bin",
-      process.platform === "win32" ? "opencode.cmd" : "opencode",
-    )
+    const executable = path.join(directory, "node_modules", "opencode-ai", "bin", "opencode.exe")
     const home = path.join(directory, "home")
     const configHome = path.join(home, ".config")
     await mkdir(configHome, { recursive: true })
