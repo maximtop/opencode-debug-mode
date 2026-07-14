@@ -49,7 +49,7 @@ The workflow `.github/workflows/release.yml` runs automatically for tags matchin
 - Require npm CLI version 11.5.1 or newer.
 - Publish the downloaded tarball without rebuilding it, using public access, the mapped dist-tag, and provenance.
 - Before publishing, query the registry. If that exact version already exists, treat matching manifest integrity as success and a different integrity as a collision error.
-- The bootstrap release may use the environment secret `NPM_TOKEN` with read/write access to the `@maximtop` scope; trusted publishing replaces it after the first successful release.
+- The bootstrap `v0.1.0` release used a short-lived environment secret with read/write access to the `@maximtop` scope. Subsequent releases use only the configured npm Trusted Publisher and GitHub OIDC; the workflow must not bind an npm token.
 
 ## Repository and documentation requirements
 
@@ -76,4 +76,4 @@ The workflow `.github/workflows/release.yml` runs automatically for tags matchin
 
 ## Implementation status
 
-The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` normally allows only `v*` tags without approval. A granular token with read/write access to the `@maximtop` scope is stored as the temporary Environment secret `NPM_TOKEN`. Release tags are immutable; a workflow-only failure after Release creation is recovered through the guarded manual path without moving the tag or replacing its assets.
+The package metadata, helper, tests, documentation, CI tag exclusion, and three-job release workflow are implemented and verified. The GitHub repository is public, `master` remains the default branch, and Environment `npm` normally allows only `v*` tags without approval. npm Trusted Publishing is bound to `release.yml` and Environment `npm`, so later releases use GitHub OIDC without an npm token. Release tags are immutable; a workflow-only failure after Release creation is recovered through the guarded manual path without moving the tag or replacing its assets.

@@ -54,7 +54,7 @@ Implementation note: the package was later moved into the `@maximtop` npm scope 
 
 - [x] Implement `prepare` with tag/master validation, full verification, one pack operation, checksum/manifest generation, and artifact upload.
 - [x] Implement idempotent `create-github-release` with generated notes and prepared assets.
-- [x] Implement `publish-npm` with Environment `npm`, npm CLI validation, registry integrity comparison, exact tarball publication, bootstrap token, and provenance.
+- [x] Implement `publish-npm` with Environment `npm`, npm CLI validation, registry integrity comparison, exact tarball publication, bootstrap-to-OIDC authentication, and provenance.
 - [x] Restrict ordinary CI branch pushes so tag pushes do not duplicate jobs.
 - [x] Run focused workflow policy tests.
 
@@ -72,7 +72,7 @@ Implementation note: all 30 focused release tests pass, both workflow YAML files
 - [x] Verify npm bootstrap authorization without creating the release tag.
 - [x] Mark implemented local work complete and report any remaining external prerequisite.
 
-Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub reports a public repository with default branch `master`; Environment `npm` has no approval and normally permits only tag `v*`. The locally stored granular token authenticates as `maximtop`, grants the required `@maximtop` scope access, and is provisioned as the Environment secret `NPM_TOKEN`. Tag `v0.1.0` was created only after these prerequisites and hosted CI passed.
+Implementation note: local verification passed with 116 unit, 23 integration, and 14 E2E tests plus successful build, pack dry-run, and publish dry-run. GitHub reports a public repository with default branch `master`; Environment `npm` has no approval and normally permits only tag `v*`. The bootstrap granular token authenticated as `maximtop`, granted the required `@maximtop` scope access, and published `v0.1.0` only after hosted CI passed. npm Trusted Publishing then replaced the bootstrap credential for later releases.
 
 ### [x] Task 6: Add immutable-tag release recovery
 

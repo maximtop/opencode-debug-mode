@@ -382,7 +382,6 @@ jobs:
       - name: Publish prepared package to npm
         shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PACKAGE_NAME: ${{ needs.prepare.outputs.package_name }}
           VERSION: ${{ needs.prepare.outputs.version }}
           NPM_TAG: ${{ needs.prepare.outputs.npm_tag }}

@@ -47,8 +47,8 @@ gh workflow run release.yml --ref master -f tag=vX.Y.Z
 
 The manual recovery reuses the tarball and checksum already attached to the GitHub Release instead of rebuilding them. Keep the temporary `master` policy until the complete run succeeds, including `publish-npm`; then remove it. Provenance for this exceptional recovery points to the recovery workflow commit on `master`, while the verified manifest, checksum, and package contents remain bound to the immutable release tag.
 
-### First npm publication
+### npm publishing authentication
 
-Before pushing the first tag, make the repository public and create the GitHub Environment `npm` without manual approval, restricted to protected tag pattern `v*`. Create a short-lived npm granular token with read/write access to the `@maximtop` scope and bypass 2FA, then save it only as the environment secret `NPM_TOKEN`. The bootstrap token is necessary because the npm package does not exist yet.
+The package uses an npm Trusted Publisher bound to user `maximtop`, repository `opencode-debug-mode`, workflow `release.yml`, Environment `npm`, and permission `npm publish`. The Environment has no manual approval and normally permits only protected tag pattern `v*`. Do not add `NODE_AUTH_TOKEN` or `NPM_TOKEN`: releases authenticate only through GitHub OIDC and receive provenance automatically.
 
-After the first successful publication, configure an npm Trusted Publisher with user `maximtop`, repository `opencode-debug-mode`, workflow `release.yml`, environment `npm`, and permission `npm publish`. Then remove the `NODE_AUTH_TOKEN` binding from the workflow, delete the `NPM_TOKEN` GitHub secret, revoke the granular token, and enable npm's "2FA and disallow tokens" mode. Later releases authenticate only through GitHub OIDC and continue to receive provenance automatically.
+The bootstrap `v0.1.0` publication used a short-lived granular token because the npm package did not exist yet. That token and its GitHub secret were removed after Trusted Publishing was configured, and the package now disallows token-based publication.
