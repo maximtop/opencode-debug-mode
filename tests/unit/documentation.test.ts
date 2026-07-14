@@ -21,11 +21,12 @@ describe("open-source documentation", () => {
     expect(readme).not.toMatch(/Python probes are supported|Go probes are supported/)
   })
 
-  it("uses Node.js 24 actions without dropping the Node.js 20/22 matrix", async () => {
+  it("uses Node.js 24 actions without a redundant Node.js version matrix", async () => {
     const workflow = await readFile(".github/workflows/ci.yml", "utf8")
     expect(workflow.match(/actions\/checkout@v7/g)).toHaveLength(3)
     expect(workflow.match(/actions\/setup-node@v7/g)).toHaveLength(3)
-    expect(workflow).toContain("node: [20, 22]")
-    expect(workflow).toContain(`node-version: \${{ matrix.node }}`)
+    expect(workflow.match(/node-version: 24/g)).toHaveLength(3)
+    expect(workflow).not.toContain("node: [20, 22]")
+    expect(workflow).not.toContain("matrix.node")
   })
 })
