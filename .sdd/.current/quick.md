@@ -1,84 +1,83 @@
-# Implementation Plan: Use Node.js 24 GitHub Actions runtimes
+# Implementation Plan: Reduce CI to Node.js 24
 
 **Created**: 2026-07-14
 **Status**: Implemented
 **Model**: GPT-5 Codex, high reasoning effort
 **Implemented by**: GPT-5 Codex, high reasoning effort
 **Type**: Configuration
-**Input**: Replace GitHub Actions releases that target the deprecated Node.js 20 action runtime with official releases that natively use Node.js 24, while preserving the package compatibility matrix on Node.js 20 and 22, all existing jobs, and no-publish behavior.
+**Input**: Remove the Node.js 20/22 CI dimension to avoid unnecessary resource use. Keep one platform job per Ubuntu, macOS, and Windows, run all project jobs on Node.js 24, and retain the Node.js 24-based GitHub Actions releases.
 
 ## Problem
 
-GitHub Actions reports that `actions/checkout@v4` and `actions/setup-node@v4` target the deprecated Node.js 20 action runtime and are being forced to run on Node.js 24. The workflow must use official action releases whose own runtime is Node.js 24 without changing the Node.js versions used to test this package.
+The workflow currently runs the platform suite six times: three operating systems multiplied by Node.js 20 and 22. The user explicitly prefers lower CI resource usage over continuous verification of both older Node.js versions.
 
 ## Research Findings
 
-The workflow is defined entirely in `.github/workflows/ci.yml`. It has `quality`, cross-platform `platform`, and `opencode-compat` jobs. The committed workflow uses `actions/checkout@v4` and `actions/setup-node@v4`; an existing uncommitted edit upgraded them to `@v6` but also removed the Node.js 20/22 platform dimension and changed every project runtime to Node.js 24.
-
-Official `action.yml` metadata for both `actions/checkout@v7` and `actions/setup-node@v7` declares `runs.using: node24`. Their `v7.0.0` releases are the current stable releases on 2026-07-14.
+`.github/workflows/ci.yml` uses `actions/checkout@v7` and `actions/setup-node@v7`; their official action metadata declares the Node.js 24 action runtime. The `quality` and `opencode-compat` jobs currently install Node.js 20, while the `platform` job combines three operating systems with Node.js 20/22. Removing only the `node` dimension reduces the workflow from eight jobs to five without removing an operating system, quality checks, or OpenCode compatibility checks.
 
 ### Root Cause
 
-The warning concerns the JavaScript runtime embedded in the action release, not the `node-version` installed by `setup-node` for project commands. Updating project `node-version` values therefore does not fix the action metadata correctly and would drop required Node.js 20/22 compatibility coverage.
+The platform matrix treats Node.js version as a second dimension even though the user no longer requires that compatibility coverage. This doubles the three expensive platform jobs, including real packed OpenCode installations on Windows.
 
 ### Patterns to Follow
 
-- Keep action major tags in the existing `uses: owner/action@vN` style.
-- Keep the existing three jobs and their commands unchanged.
-- Keep `quality` and `opencode-compat` on Node.js 20.
-- Keep `platform` on the Cartesian matrix of Ubuntu/macOS/Windows and Node.js 20/22.
-- Add a focused unit assertion to prevent action-runtime and project-runtime concerns from being conflated again.
+- Keep `actions/checkout@v7` and `actions/setup-node@v7` in all three job definitions.
+- Keep the `quality`, `platform`, and `opencode-compat` jobs and their commands unchanged.
+- Keep the OS matrix `[ubuntu-latest, macos-latest, windows-latest]`.
+- Use `node-version: 24` in every setup-node step.
+- Do not add publish behavior or broaden permissions.
 
 ### Edge Cases
 
-- The workflow must not collapse the six platform combinations to three Node.js 24-only jobs.
-- The action upgrade must not add a publish step or broaden repository permissions.
-- Static verification must reject older action majors even if the installed project runtime is Node.js 24.
+- The workflow must still test all three operating systems.
+- The package's `engines.node >=20` declaration remains unchanged; this change intentionally stops continuously verifying the lower bound.
+- The regression test must distinguish the three workflow definitions from the five expanded hosted jobs.
 
 ## File Structure
 
 | File | Action | Responsibility |
 | --- | --- | --- |
-| `tests/unit/documentation.test.ts` | Modify | Assert Node.js 24-based action majors and the retained Node.js 20/22 compatibility matrix. |
-| `.github/workflows/ci.yml` | Modify | Use `checkout@v7` and `setup-node@v7` while preserving all project test runtimes and jobs. |
+| `tests/unit/documentation.test.ts` | Modify | Assert three Node.js 24 setup definitions and the absence of a Node.js version matrix. |
+| `.github/workflows/ci.yml` | Modify | Remove `matrix.node` and run every job on Node.js 24. |
 
 ## Solution
 
-Add a failing workflow policy test, then update every checkout/setup-node reference to `@v7`. Restore the `node: [20, 22]` platform dimension and `${{ matrix.node }}` setup value, and retain Node.js 20 for `quality` and `opencode-compat`.
+First update the workflow policy test so the current Node.js 20/22 matrix fails. Then remove `node: [20, 22]`, replace `${{ matrix.node }}` with `24`, and change the two fixed Node.js 20 setup values to `24`. Verify locally and in hosted CI, where five jobs must pass without the deprecated Node.js 20 action-runtime annotation.
 
 ### Alternatives Considered
 
-`@v6` also declares the Node.js 24 action runtime, but `@v7` is the current stable official major and avoids introducing an already superseded action release. Changing all project jobs to Node.js 24 was rejected because it removes the package's declared minimum-version coverage.
+Keeping a single Node.js 20 lower-bound job would preserve some compatibility evidence but would still spend resources the user explicitly asked to remove. Testing only Ubuntu was rejected because the user asked to remove the Node.js matrix, not the operating-system coverage.
 
 ## Tasks
 
-### [x] Task 1: Add workflow policy coverage
+### [x] Task 1: Update workflow resource policy coverage
 
 **Files:**
 - Modify: `tests/unit/documentation.test.ts`
 
-- [x] **Step 1: Write the failing test**
+- [x] **Step 1: Replace the old matrix-preservation assertions**
 
 ```ts
-it("uses Node.js 24 actions without dropping the Node.js 20/22 matrix", async () => {
+it("uses Node.js 24 actions without a redundant Node.js version matrix", async () => {
   const workflow = await readFile(".github/workflows/ci.yml", "utf8")
   expect(workflow.match(/actions\/checkout@v7/g)).toHaveLength(3)
   expect(workflow.match(/actions\/setup-node@v7/g)).toHaveLength(3)
-  expect(workflow).toContain("node: [20, 22]")
-  expect(workflow).toContain(`node-version: \${{ matrix.node }}`)
+  expect(workflow.match(/node-version: 24/g)).toHaveLength(3)
+  expect(workflow).not.toContain("node: [20, 22]")
+  expect(workflow).not.toContain("matrix.node")
 })
 ```
 
 - [x] **Step 2: Run the focused test and verify failure**
 
 Run: `npx vitest run tests/unit/documentation.test.ts`
-Expected: FAIL because the existing edit uses `@v6` and removed `node: [20, 22]`.
+Expected: FAIL because the current workflow has no `node-version: 24` values and still contains the Node.js 20/22 dimension.
 
-**Verification**: The regression test fails for the exact action-major/matrix mismatch.
+**Verification**: The policy test fails against the resource-heavy workflow.
 
-Implementation note: the focused test failed on the missing `@v7` references before evaluating the removed matrix, confirming the expected pre-fix state.
+Implementation note: the focused test failed on the missing three `node-version: 24` values, confirming the expected pre-change state.
 
-### [x] Task 2: Upgrade action runtimes and preserve compatibility coverage
+### [x] Task 2: Collapse the Node.js matrix
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
@@ -86,18 +85,16 @@ Implementation note: the focused test failed on the missing `@v7` references bef
 - [x] **Step 1: Apply the minimal workflow change**
 
 ```yaml
-- uses: actions/checkout@v7
-- uses: actions/setup-node@v7
-  with:
-    node-version: 20
-    cache: npm
-
 matrix:
   os: [ubuntu-latest, macos-latest, windows-latest]
-  node: [20, 22]
+
+- uses: actions/setup-node@v7
+  with:
+    node-version: 24
+    cache: npm
 ```
 
-Use `node-version: ${{ matrix.node }}` in `platform`; retain `node-version: 20` in `quality` and `opencode-compat`.
+Use `node-version: 24` in `quality`, `platform`, and `opencode-compat`; remove only the `node` matrix dimension.
 
 - [x] **Step 2: Run the focused test and verify success**
 
@@ -107,38 +104,38 @@ Expected: PASS.
 - [x] **Step 3: Run project verification**
 
 Run: `npm run check`
-Expected: lint, typecheck, 96 unit tests, build, and integration tests pass.
+Expected: lint, typecheck, 96 unit tests, build, and 23 integration tests pass.
 
-**Verification**: All three action pairs use `@v7`, the six-entry platform matrix remains, and no job or publish behavior changes.
+**Verification**: The workflow defines three action pairs, three Node.js 24 setup values, three operating-system variants, and no Node.js version dimension.
 
-Implementation note: the focused test passes, `npm run check` passes with 96 unit and 23 integration tests, and a lint warning in the new assertion was corrected before final verification.
+Implementation note: the focused test passes and `npm run check` passes with clean lint/typecheck, 96 unit tests, build, and 23 integration tests.
 
-### [x] Task 3: Verify the hosted workflow
+### [x] Task 3: Verify reduced hosted CI
 
 **Files:**
 - Modify: `.sdd/.current/quick.md`
 
 - [x] **Step 1: Commit and push the focused change**
 
-Run: `git commit -m "Use Node.js 24 GitHub Actions runtimes" && git push origin master`
+Run: `git commit -m "Reduce CI to Node.js 24" && git push origin master`
 Expected: The commit reaches `origin/master` and starts the CI workflow.
 
 - [x] **Step 2: Verify the resulting GitHub Actions run**
 
 Run: `gh run watch "$(gh run list --branch master --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status`
-Expected: All eight jobs pass and the Node.js 20 action-runtime deprecation annotation is absent.
+Expected: Five jobs pass: `quality`, `opencode-compat`, and one `platform` job for each operating system. The Node.js 20 action-runtime deprecation annotation is absent.
 
-**Verification**: The hosted run proves both the action-runtime upgrade and the retained package compatibility matrix.
+**Verification**: Hosted CI confirms the resource reduction and retained OS coverage.
 
-Implementation note: commit `97491b0` was pushed to `master`. GitHub Actions run `29318503313` passed all eight jobs; its only annotations concern the independent `macos-latest` image migration, and the Node.js 20 action-runtime deprecation warning is absent.
+Implementation note: commit `48b6cde` was pushed to `master`. GitHub Actions run `29322133793` passed exactly five jobs: `quality`, `opencode-compat`, and one `platform` job for Ubuntu, macOS, and Windows. The deprecated Node.js 20 action-runtime annotation is absent.
 
 ## Final Verification
 
 - [x] Run focused policy test: `npx vitest run tests/unit/documentation.test.ts`
 - [x] Run full project checks: `npm run check`
-- [x] Verify workflow contains three `checkout@v7` and three `setup-node@v7` references.
-- [x] Verify hosted CI passes all eight jobs without the Node.js 20 action-runtime warning.
+- [x] Verify three `checkout@v7`, three `setup-node@v7`, and three `node-version: 24` references.
+- [x] Verify hosted CI passes exactly five jobs without the Node.js 20 action-runtime warning.
 
 ## Notes
 
-The GitHub warning about the future `macos-latest` image migration is independent of this change and remains non-blocking.
+This user-approved tradeoff means the package still declares Node.js 20 support but CI no longer continuously proves it. The independent `macos-latest` image migration annotation may remain.
