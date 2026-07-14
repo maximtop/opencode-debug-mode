@@ -57,7 +57,7 @@
 | FR-053 | package.json; README.md; .github/workflows/ci.yml | tests/unit/documentation.test.ts; tests/integration/opencode-install.test.ts | Implemented |
 | FR-054 | vitest.config.ts; src; tests | npm run coverage; tests/e2e/public-tools-workflow.test.ts; tests/unit/public-tools-errors.test.ts | Implemented: 90.31% statements, 90.46% functions, 92.95% lines, and 85.02% branches meet the configured gates |
 | FR-055 | package.json; README.md; .github/workflows/ci.yml | tests/unit/documentation.test.ts; tests/integration/opencode-install.test.ts | Implemented |
-| FR-056 | package.json; README.md; .github/workflows/ci.yml | tests/unit/documentation.test.ts; tests/integration/opencode-install.test.ts | Partial: CI is defined but the three-platform matrix was not executed locally |
+| FR-056 | package.json; README.md; .github/workflows/ci.yml | tests/unit/documentation.test.ts; tests/integration/opencode-install.test.ts | Implemented: CI passed on macOS, Linux, and Windows with Node.js 20 and 22 |
 | FR-057 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
 | FR-058 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
 | FR-059 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
@@ -66,7 +66,7 @@
 | FR-062 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
 | FR-063 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
 | FR-064 | src/investigation; src/tools/state-tools.ts | tests/unit/investigation-store.test.ts; tests/e2e/resume-debug.test.ts | Implemented |
-| SC-001 | src/plugin.ts; src/process; src/collector | tests/e2e/cli-debug.test.ts; tests/e2e/browser-debug.test.ts | Partial: local install smoke tests pass; macOS, Linux, and Windows CI results remain pending |
+| SC-001 | src/plugin.ts; src/process; src/collector | tests/e2e/cli-debug.test.ts; tests/e2e/browser-debug.test.ts | Implemented: packed OpenCode smoke tests and the macOS, Linux, and Windows CI matrix pass |
 | SC-002 | src/plugin.ts; src/process; src/collector | tests/e2e/cli-debug.test.ts; tests/e2e/browser-debug.test.ts | Implemented |
 | SC-003 | src/plugin.ts; src/process; src/collector | tests/e2e/cli-debug.test.ts; tests/e2e/browser-debug.test.ts | Implemented |
 | SC-004 | src/collector; src/evidence; src/cleanup | tests/integration/security.test.ts; tests/integration/stress.test.ts; tests/integration/cleanup.test.ts | Implemented |

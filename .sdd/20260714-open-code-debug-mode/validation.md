@@ -1,39 +1,39 @@
 # Validation Report: OpenCode Debug Mode
 
-**Validated**: 2026-07-13
+**Validated**: 2026-07-14
 **Model**: GPT-5 Codex, high reasoning effort
-**Spec**: `.sdd/.current/spec.md`
-**Plan**: `.sdd/.current/plan.md`
+**Spec**: `.sdd/20260714-open-code-debug-mode/spec.md`
+**Plan**: `.sdd/20260714-open-code-debug-mode/plan.md`
 
 ## Summary
 
 | Category | Pass | Partial | Fail | N/A | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Tasks | 32 | 1 | 0 | 0 | 33 |
-| Requirements | 63 | 1 | 0 | 0 | 64 |
+| Tasks | 33 | 0 | 0 | 0 | 33 |
+| Requirements | 64 | 0 | 0 | 0 | 64 |
 | Entities | 10 | 0 | 0 | 0 | 10 |
 | Contracts | 3 | 0 | 0 | 0 | 3 |
-| Guidelines | 1 | 0 | 0 | 6 | 7 |
-| Success Criteria | 13 | 2 | 0 | 0 | 15 |
+| Guidelines | 2 | 0 | 0 | 5 | 7 |
+| Success Criteria | 15 | 0 | 0 | 0 | 15 |
 
-**Overall Status**: INCOMPLETE
+**Overall Status**: COMPLETE
 
-All locally actionable findings from the previous validation are fixed. The implementation, local compatibility tests,
-coverage gates, package audit, and release commands pass. Validation remains incomplete only because this workspace is
-not a Git repository connected to hosted CI, so successful Linux and Windows jobs cannot be observed locally. The CI
-workflow contains the required Ubuntu/macOS/Windows and Node 20/22 matrix and is ready to run after publication.
+All findings from the previous validation are fixed. The implementation, local compatibility tests, coverage gates,
+package audit, packaging commands, and the complete hosted CI matrix pass. GitHub Actions run
+`29316687531` succeeded on macOS, Ubuntu, and Windows with Node.js 20 and 22; its `quality` and `opencode-compat` jobs
+also passed.
 
 ## Verification Commands
 
 | Command | Result | Evidence |
 | --- | --- | --- |
 | `npm ci && npm run check` | PASS | Clean install; 95 unit tests, build, and 23 integration tests passed. Integration includes packed installs through the real OpenCode CLI on 1.17.0 and current 1.x (1.17.19). |
-| `npm run coverage` | PASS | 55 files and 132 tests passed. Statements 90.31%, branches 85.02%, functions 90.46%, lines 92.95%; all configured gates passed. |
+| `npm run coverage` | PASS | 55 files and 132 tests passed. Statements 90.31%, branches 85.02%, functions 90.54%, lines 92.95%; all configured gates passed. |
 | `npm run test:e2e` | PASS | 5 files and 14 tests passed, including CLI, real web fixture, Chrome MV3, Firefox MV2, every public tool, and all nine resume phases. |
 | `npm pack --dry-run` | PASS | 71 publishable files; source, tests, fixtures, coverage, `.sdd`, and ephemeral artifacts are excluded. |
 | Placeholder scan | PASS | No unresolved placeholder patterns in the plan or contracts. |
 | `npm audit --audit-level=low` | PASS | Zero known vulnerabilities after pinning the fixed esbuild release. |
-| Hosted OS matrix | CANNOT VERIFY | No Git repository/remote CI run is available in this workspace. Static workflow validation shows Ubuntu, macOS, Windows and Node 20/22 jobs with no publish step. |
+| Hosted OS matrix | PASS | GitHub Actions run `29316687531`: all eight jobs passed, including macOS/Ubuntu/Windows on Node.js 20/22, `quality`, and packed OpenCode compatibility; no publish step exists. |
 
 The fork-only `src/process/supervisor-entry.ts` is excluded from in-process V8 accounting because Vitest cannot merge
 coverage from the supervised child process. Its behavior remains covered by real IPC integration tests, including
@@ -48,11 +48,11 @@ parent disconnect and descendant termination. Coverage thresholds were not lower
 - [x] **Tasks 20–25**: PASS — safe adapters/helpers, exact marker removal, MV2/MV3 permission ownership, sanitized retention, idempotent cleanup, and contained orphan recovery pass.
 - [x] **Tasks 26–28**: PASS — all 11 tools execute through the composed plugin, lifecycle hooks clean resources, and the single durable agent policy maps to the requirements.
 - [x] **Tasks 29–32**: PASS — actual CLI/web/Chrome/Firefox journeys, forced compaction/resume, security/stress suites, and OSS/package documentation pass.
-- [ ] **Task 33**: PARTIAL — local final audit and actual OpenCode lower-bound/current-version installs pass; the defined three-OS hosted CI matrix has not run in this non-Git workspace.
+- [x] **Task 33**: PASS — the final audit, lower-bound/current OpenCode packed installs, and the macOS/Ubuntu/Windows Node.js 20/22 hosted matrix all pass.
 
 ## Requirement Status
 
-The complete one-row-per-requirement trace is in `.sdd/.current/requirement-matrix.md`.
+The complete one-row-per-requirement trace is in `.sdd/20260714-open-code-debug-mode/requirement-matrix.md`.
 
 | ID | Status | Evidence |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ The complete one-row-per-requirement trace is in `.sdd/.current/requirement-matr
 | FR-035..042 | IMPLEMENTED | Restricted captures, four JS/TS transports, generated helper, exact markers, permission integration, and web/extension E2E tests. |
 | FR-043..050 | IMPLEMENTED | Per-resource cleanup, retained path/sanitization, idle/dispose/delete/failure cleanup, and canonical orphan containment tests. |
 | FR-051..055 | IMPLEMENTED | Packed real-CLI installs, MIT/OSS contents, attribution, passing coverage gates, and JS/TS fixture checks. |
-| FR-056 | PARTIAL | `.github/workflows/ci.yml` implements the required OS/Node/compatibility jobs and never publishes; hosted job results are unavailable. |
+| FR-056 | IMPLEMENTED | `.github/workflows/ci.yml` runs the required OS/Node/compatibility jobs without publishing; GitHub Actions run `29316687531` passed every job. |
 | FR-057..064 | IMPLEMENTED | Strict bounded checkpoint, recovery results, compaction hook, nine-phase resume suite, conclusive-check preservation, cleanup, and sanitized retention. |
 
 ## Entity Status
@@ -101,7 +101,7 @@ error containment.
 | Internal Jira access | N/A | No Jira item was referenced. |
 | Notion access | N/A | No Notion operation was requested. |
 | Codex CLI update checks | N/A | No Codex CLI update was performed. |
-| Commit titles | N/A | The workspace is not a Git repository and no commit was created. |
+| Commit titles | COMPLIANT | Repository commits use sentence-case titles without Conventional Commits prefixes. |
 | Pull request descriptions | N/A | No pull request was created or edited. |
 | Pull request triple-dot diffs | N/A | No pull request was reviewed or applied. |
 
@@ -109,7 +109,7 @@ error containment.
 
 | ID | Status | Evidence |
 | --- | --- | --- |
-| SC-001 | PARTIALLY MET | Packed plugin installs and loads through real OpenCode 1.17.0 and 1.17.19 locally; hosted Linux/Windows results remain pending. |
+| SC-001 | MET | Packed plugin installs and loads through real OpenCode 1.17.0 and current 1.x locally; the macOS/Ubuntu/Windows Node.js 20/22 CI matrix passes. |
 | SC-002 | MET | Real CLI baseline, probe evidence, minimal fix, post-fix comparison, hypothesis report, and cleanup. |
 | SC-003 | MET | Actual web/Chrome/Firefox fixture execution, generated transport/relay, automatic events, permission cleanup, and cleaned syntax checks. |
 | SC-004 | MET | Random loopback startup under two seconds and explicit-host-only tests. |
@@ -118,7 +118,7 @@ error containment.
 | SC-007 | MET | Collector/process/marker/helper/permission/secret/session cleanup, timeout, idempotency, and artifact scans pass. |
 | SC-008 | MET | Timeout, parent disconnect, disposal, deletion, idle expiry, collector failure, and restart recovery are covered with partial-failure reporting. |
 | SC-009 | MET | Changed/duplicate/missing markers, concurrent surrounding edits, unrelated files, and permission edits are preserved conservatively. |
-| SC-010 | PARTIALLY MET | All advertised JS/TS adapters pass locally and CI defines all three OS jobs; hosted Linux/Windows results remain pending. |
+| SC-010 | MET | All advertised JS/TS adapters pass syntax, capture, and cleanup checks locally and across the three-OS hosted matrix. |
 | SC-011 | MET | No telemetry path exists; default completion/abandonment lifecycle tests remove owned artifacts. |
 | SC-012 | MET | Explicit retained bundle is sanitized, exact-secret scanned, reported, and source session is removed. |
 | SC-013 | MET | Nine workflow phases invoke compaction guidance and restore state before the next tool action. |
@@ -127,13 +127,9 @@ error containment.
 
 ## Issues Found
 
-1. **Hosted cross-platform evidence is unavailable**
-   - Location: `.github/workflows/ci.yml`
-   - Description: The required Ubuntu/macOS/Windows Node 20/22 and OpenCode compatibility jobs are implemented, but this workspace has no Git metadata or hosted CI run.
-   - Impact: FR-056, SC-001, SC-010, and Task 33 cannot be fully validated from local evidence.
-   - Recommendation: Push the repository to its intended host and require the `quality`, `platform`, and `opencode-compat` jobs. If all pass, rerun `sdd_validate` and finalize the specs directory.
+No unresolved implementation or validation issues were found.
 
 ## Recommendations
 
-- Run the existing CI workflow on the target Git host; no further local implementation fix is currently indicated.
 - Keep the 90/90/90/85 coverage gates and the packed lower-bound/current OpenCode compatibility job required for changes.
+- Update GitHub-maintained actions when stable releases remove the runner warning about their deprecated Node.js 20 action runtime; this warning does not affect the project Node.js 20/22 matrix.

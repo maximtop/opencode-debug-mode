@@ -1,7 +1,7 @@
 # Implementation Plan: OpenCode Debug Mode
 
 **Created**: 2026-07-13
-**Status**: Implemented
+**Status**: Validated
 **Input**: Feature specification from `/Volumes/dev/opencode-debug-mode/.sdd/.current/spec.md`
 **Model**: GPT-5 (Codex), high reasoning effort
 **User Input**: Greenfield MIT npm package `opencode-debug-mode`; OpenCode >=1.17; Node.js >=20; explicit `debug` agent and `/debug`; CLI/process capture plus authenticated loopback HTTP collector only; deterministic cleanup and durable compact investigation state; preserve future backend seams without implementing future backends.
@@ -2168,7 +2168,7 @@ Expected: PASS; all examples parse/build, links resolve locally, unsupported cap
 
 **Verification**: README installation uses OpenCode's npm `plugin` configuration and never instructs users to copy agent/command files manually.
 
-### [ ] Task 33: Add cross-platform CI and final requirement audit
+### [x] Task 33: Add cross-platform CI and final requirement audit
 
 **Files:**
 - Create: `.github/workflows/ci.yml`

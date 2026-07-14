@@ -1,7 +1,7 @@
 # Feature Specification: OpenCode Debug Mode
 
 **Created**: 2026-07-13
-**Status**: Implemented
+**Status**: Validated
 **Model**: GPT-5 (Codex), high reasoning effort
 **Input**: Create a standalone MIT-licensed OpenCode plugin named `opencode-debug-mode` that provides an explicit, hypothesis-driven runtime debugging agent and `/debug` command. Version 1 must support cross-platform CLI capture and an ephemeral authenticated HTTP collector, automatically clean all debug artifacts, and be suitable for later publication as an independent open-source npm package.
 
