@@ -18,6 +18,9 @@ describe("open-source documentation", () => {
     expect(readme).toContain("Node.js 20")
     expect(readme).toContain("keepArtifacts=false")
     expect(readme).toContain("JavaScript and TypeScript")
+    expect(readme).toContain("Safe local investigation and temporary instrumentation proceed autonomously")
+    expect(readme).toContain("whether the issue reproduced")
+    expect(readme).toContain("whether the same reproduction is now fixed")
     expect(readme).not.toMatch(/Python probes are supported|Go probes are supported/)
   })
 

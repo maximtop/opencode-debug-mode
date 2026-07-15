@@ -1,125 +1,231 @@
-# Implementation Plan: Allow Questions in Debug Mode
+# Implementation Plan: Use Questions as Human Evidence Checkpoints
 
 **Created**: 2026-07-15
 **Status**: Implemented
 **Model**: GPT-5 Codex, high reasoning effort
 **Implemented by**: GPT-5 Codex, high reasoning effort
 **Type**: Bug Fix
-**Input**: On OpenCode 1.18.1, make the plugin's custom `debug` primary agent able to use the structured `question` tool while preserving the default denial of plan-mode transitions. Release the fix as `v0.1.1`.
+**Input**: Make the OpenCode debug agent behave autonomously like the observed Cursor session: generate competing hypotheses and prepare validated temporary instrumentation before requesting a human reproduction, use structured questions at prepared pre-fix and post-fix human checkpoints, and retain the evidence-before-fix rule.
 
 ## Problem
 
-OpenCode 1.18.1 resolves the plugin's `debug` agent with `question: deny`, so the Tool Permissions screen shows Question as denied and the structured question tool is unavailable. The plugin currently registers the custom agent without a permission override, causing it to inherit OpenCode's restrictive custom-agent default.
+On OpenCode 1.18.1 with GLM 5.2, the debug agent fetched AG-55256, performed static code exploration, promoted one unverified explanation to a leading hypothesis, and used the structured Question tool to ask the developer to choose among speculative fix directions. The Jira issue already supplies a runtime reproduction surface, so no product decision was needed at that point. The expected workflow is to record competing hypotheses, prepare the smallest owned probes, build or validate the instrumented target, ask whether the prepared pre-fix reproduction occurred, and after an evidence-backed fix ask whether the same reproduction is now fixed.
 
 ## Research Findings
 
-The installed OpenCode 1.18.1 executable resolves the current agent to a final `question` deny rule and reports `tools.question` as `false`. OpenCode merges an agent's explicit permission configuration after its defaults, so the smallest compatible fix is an agent-local `permission: { question: "allow" }` override. Omitting `plan_enter` and `plan_exit` preserves their default deny rules.
+`assets/debug-agent.md` already requires two to four falsifiable hypotheses, a pre-fix baseline, minimal probes, and an evidence-backed fix. However, it has no explicit autonomy or Question-tool policy. Version 0.1.1 enabled `question` for the custom agent, so models can now treat it as a convenient planning gate even when safe local work remains.
 
-The package already accepts OpenCode 1.x from `1.17.0` through the peer range `>=1.17.0 <2`; no runtime dependency change is required. The existing packed-install integration helper is the right place to prove the final behavior after OpenCode has merged defaults and plugin configuration.
-
-OpenCode's generated 1.x `Config` type still enumerates only legacy permission keys even though the runtime accepts arbitrary permission names. A typed `Record<string, "allow" | "ask" | "deny">` intermediate documents and contains that compatibility gap without weakening the surrounding plugin configuration type.
+The existing policy test in `tests/unit/agent-policy.test.ts` checks the evidence lifecycle but does not prohibit asking the developer to choose a hypothesis or fix before evidence. The README describes the lifecycle but does not state that safe local investigation and temporary instrumentation proceed without a decision prompt. AG-55256 confirms the relevant task is a Chrome MV3 runtime failure with concrete reproduction steps, not an ambiguous product requirement.
 
 ### Root Cause
 
-`src/plugin.ts` sets the debug agent's mode, description, and prompt but does not define permissions. OpenCode therefore applies the custom-agent default `question: deny`.
+The prompt distinguishes behavioral fixes from evidence-backed work but does not explicitly classify temporary owned instrumentation as autonomous investigation, constrain the structured Question tool to observations and authorization, or define symmetric pre-fix and post-fix human checkpoints. This ambiguity became user-visible as soon as `question` was allowed.
 
 ### Patterns to Follow
 
-- Scope the override to `config.agent.debug`; do not change global permissions.
-- Explicitly allow only `question`.
-- Keep `plan_enter` and `plan_exit` absent from the plugin override so OpenCode continues to deny them.
-- Test both the plugin-authored configuration and OpenCode's fully resolved agent.
-- Keep the existing lower-bound compatibility check and update the current-version check to OpenCode 1.18.1.
+- Keep the existing evidence-before-behavioral-fix requirement unchanged.
+- Use direct imperative policy language because the contract must hold across OpenCode models.
+- Preserve the current human reproduction restriction: ask only for actions inside the target application.
+- Questions request observations or required authorization, never speculative causes or implementation choices.
+- When a person performs the pre-fix reproduction, require the same human path after the fix before cleanup or success.
+- Reuse the exact-string policy assertions in `tests/unit/agent-policy.test.ts`.
+- Keep documentation changes inside the existing README Workflow section.
 
 ### Edge Cases
 
-- Existing user or project configuration named `agent.debug` is intentionally replaced, so the plugin's permission must be deterministic after a collision.
-- Allowing `question` must not accidentally enable either plan transition tool.
-- OpenCode 1.17.0 must continue to install and register the package.
-- The release tag must match `package.json` exactly and must be created only after `master` CI succeeds.
+- The agent may still ask when required information cannot be discovered from available sources.
+- Credentials, devices, external state, external directories, or materially different actions may still require explicit authorization.
+- A human reproduction request remains valid only after the baseline transport, probes, and instrumentation check are ready and the wait is checkpointed.
+- Temporary probe edits must proceed autonomously, but production behavior must not change before deciding evidence exists.
+- If a deterministic test, fixture, or local script can reproduce the failure, the agent must prefer it over asking a person.
+- A prepared post-fix question is valid only after the evidence-backed fix and automated checks pass.
 
 ## File Structure
 
 | File | Action | Responsibility |
 | --- | --- | --- |
-| `tests/unit/plugin-registration.test.ts` | Modify | Assert the plugin writes only the intended question permission override. |
-| `tests/helpers/open-code.ts` | Modify | Read the fully resolved debug agent permissions and tool availability from a packed install. |
-| `tests/integration/opencode-install.test.ts` | Modify | Cover OpenCode 1.17.0 and 1.18.1 and assert resolved permission behavior. |
-| `src/plugin.ts` | Modify | Allow the debug agent to invoke the structured question tool. |
-| `package.json` | Modify | Bump the release version to 0.1.1. |
-| `package-lock.json` | Modify | Keep lockfile package metadata aligned with 0.1.1. |
+| `tests/unit/agent-policy.test.ts` | Modify | Lock the autonomy, Question-tool, and prepared-reproduction policy. |
+| `tests/unit/documentation.test.ts` | Modify | Require the public workflow documentation to describe autonomous investigation. |
+| `assets/debug-agent.md` | Modify | Add the explicit act-before-ask contract without weakening evidence gates. |
+| `README.md` | Modify | Document when the debug agent works autonomously and when it asks the developer. |
 
 ## Solution
 
-First add regression assertions that fail against the current plugin. Then add the single agent-level permission override. Exercise a locally packed tarball with OpenCode 1.18.1 to verify the merged result: Question is allowed and available, while Plan Enter and Plan Exit remain denied. Run the complete quality and end-to-end suites, bump to 0.1.1, publish the green `master` commit and annotated `v0.1.1` tag, then verify GitHub Release and npm provenance.
+Add a dedicated `Autonomy and questions` section immediately after the scope checkpoint. It will require the agent to continue all safe local investigation, forbid speculative fix-choice questions, and define Question as a deliberate human checkpoint for genuine blockers, required external authorization, or prepared pre-fix/post-fix observations. Strengthen the Baseline, Instrumentation, Human reproduction, Fix, and Verification sections so deterministic reproduction is preferred, owned probes are explicitly non-behavioral investigation, human action waits until tooling is ready, and a user selection cannot replace evidence. Add exact policy tests first, then update the prompt and README.
+
+### Alternatives Considered
+
+Disabling the Question tool again would prevent legitimate structured reproduction requests. Tuning one model or changing temperature would not establish a cross-model behavioral contract. Allowing the user to select a speculative fix would violate the package's evidence-first purpose. The focused prompt contract is therefore the smallest durable fix.
 
 ## Tasks
 
-### [x] Task 1: Add failing permission regression coverage
+### [x] Task 1: Add failing autonomy policy coverage
 
 **Files:**
-- Modify: `tests/unit/plugin-registration.test.ts`
-- Modify: `tests/helpers/open-code.ts`
-- Modify: `tests/integration/opencode-install.test.ts`
+- Modify: `tests/unit/agent-policy.test.ts:4-14`
+- Modify: `tests/unit/documentation.test.ts:15-23`
 
-- [x] Assert that the plugin-authored debug agent contains exactly `permission: { question: "allow" }`.
-- [x] Extend the packed-install helper to run `opencode debug agent debug` and expose the last matching `question`, `plan_enter`, and `plan_exit` actions plus `tools.question`.
-- [x] Change the default compatibility versions to `1.17.0` and `1.18.1`, then assert Question is allowed/available and both plan transitions remain denied.
-- [x] Run the focused tests before the source fix and record the expected failure.
+- [x] **Step 1: Add the agent-policy regression**
 
-**Verification**: The new regression assertion fails because the current debug agent has no permission override and OpenCode resolves Question as denied.
+```ts
+it("continues safe investigation before using the question tool", async () => {
+  const prompt = await readFile("assets/debug-agent.md", "utf8")
+  expect(prompt).toContain("Proceed autonomously through all safe local investigation that remains")
+  expect(prompt).toContain("Temporary owned instrumentation is investigation, not a behavioral fix")
+  expect(prompt).toContain(
+    "Never ask the developer to choose a hypothesis, root cause, fix direction, repository, or speculative workaround",
+  )
+  expect(prompt).toContain('Never ask "How do you want to proceed?" while a safe scoped investigation action remains')
+  expect(prompt).toContain(
+    "Treat the structured `question` tool as a deliberate human checkpoint, not a progress or planning gate",
+  )
+  expect(prompt).toContain("Use the structured `question` tool only when")
+  expect(prompt).toContain(
+    "Do not request human reproduction until the baseline transport, probes, and instrumentation check are ready",
+  )
+  expect(prompt).toContain("At a prepared pre-fix checkpoint, ask whether the issue reproduced")
+  expect(prompt).toContain("At a prepared post-fix checkpoint, ask whether the same reproduction is now fixed")
+  expect(prompt).toContain(
+    "When pre-fix reproduction required a person, require the corresponding post-fix human verification",
+  )
+})
+```
 
-Implementation note: both focused tests failed before the source change. The unit test found no permission override, and OpenCode 1.18.1 resolved `question: deny` while retaining both plan denials.
+- [x] **Step 2: Add the documentation regression**
 
-### [x] Task 2: Apply the minimal agent permission fix
+Add this assertion to `documents v1 boundaries and private defaults`:
+
+```ts
+expect(readme).toContain("Safe local investigation and temporary instrumentation proceed autonomously")
+expect(readme).toContain("whether the issue reproduced")
+expect(readme).toContain("whether the same reproduction is now fixed")
+```
+
+- [x] **Step 3: Run the focused tests and verify failure**
+
+Run: `npx vitest run tests/unit/agent-policy.test.ts tests/unit/documentation.test.ts`
+
+Expected: FAIL because the current prompt lacks the autonomy/Question contract and the README lacks the public autonomy statement.
+
+**Verification**: The tests fail on the exact missing behavioral contract observed in the screenshots.
+
+Implementation note: both focused tests failed before the prompt and README changes. After the user clarified the lifecycle, the new pre-fix/post-fix checkpoint assertions also failed against the earlier last-resort wording and documentation, then passed after the policy was revised.
+
+### [x] Task 2: Strengthen the debug-agent prompt and checkpoint lifecycle
 
 **Files:**
-- Modify: `src/plugin.ts`
+- Modify: `assets/debug-agent.md:11-39`
+- Test: `tests/unit/agent-policy.test.ts`
 
-- [x] Add `permission: { question: "allow" }` to `config.agent.debug` without adding any plan permission.
-- [x] Run the focused unit and packed-install integration tests.
+- [x] **Step 1: Add the autonomy and Question-tool contract**
 
-**Verification**: Both layers report Question allowed; the resolved OpenCode agent still reports Plan Enter and Plan Exit denied.
+Insert after `## Scope checkpoint`:
 
-Implementation note: the focused unit test and packed-install tests pass. OpenCode 1.17.0 and 1.18.1 both resolve Question to allow, expose the question tool, and leave Plan Enter and Plan Exit denied.
+```markdown
+## Autonomy and questions
 
-### [x] Task 3: Validate and prepare patch version
+Proceed autonomously through all safe local investigation that remains: obtain available issue context, inspect relevant code, record hypotheses, prefer a deterministic local reproduction, start the baseline, prepare and register minimal probes, and run instrumentation, build, type, or parse checks. Temporary owned instrumentation is investigation, not a behavioral fix. Do not pause merely because multiple causes are plausible.
+
+Never ask the developer to choose a hypothesis, root cause, fix direction, repository, or speculative workaround before deciding evidence exists. Never offer unconfirmed fixes as a Question decision gate. Never ask "How do you want to proceed?" while a safe scoped investigation action remains.
+
+Treat the structured `question` tool as a deliberate human checkpoint, not a progress or planning gate. Use it only for required information unavailable through accessible sources, explicit authorization, or a prepared human reproduction or verification. Every question requests an observation or required authorization, never a speculative cause or implementation choice. If a deterministic local check can answer the checkpoint, run it instead of asking the developer.
+```
+
+- [x] **Step 2: Make baseline and instrumentation sequencing explicit**
+
+Add these sentences to the existing Baseline and Instrumentation sections:
+
+```markdown
+Prefer a deterministic test, fixture, or local script over human reproduction whenever it can exercise the failure.
+
+Preparing, inserting, registering, and validating an owned temporary probe is safe investigation work; perform it without requesting fix-direction approval.
+```
+
+- [x] **Step 3: Tighten human reproduction, fix, and verification gates**
+
+Add these sentences to Human reproduction, Fix, and Verification:
+
+```markdown
+Do not request human reproduction until the baseline transport, probes, and instrumentation check are ready. At a prepared pre-fix checkpoint, ask whether the issue reproduced using the exact in-application steps you provide. Summarize the hypotheses the reproduction will distinguish; do not ask the developer which hypothesis or fix to choose.
+
+A developer selection cannot substitute for deciding runtime evidence, a failing test, or a deterministic reproduction.
+
+At a prepared post-fix checkpoint, ask whether the same reproduction is now fixed after the developer repeats the exact in-application steps. Ask only after the evidence-backed fix and automated checks pass. When pre-fix reproduction required a person, require the corresponding post-fix human verification before cleanup or success.
+```
+
+- [x] **Step 4: Run the focused policy test**
+
+Run: `npx vitest run tests/unit/agent-policy.test.ts`
+
+Expected: PASS.
+
+**Verification**: The prompt commands safe investigation and instrumentation before a Question while preserving the behavioral-fix evidence gate.
+
+Implementation note: the prompt now exhausts safe local investigation before asking, explicitly treats owned probes as non-behavioral investigation, and uses structured questions only for genuine blockers, required authorization, or prepared pre-fix/post-fix human observations. The focused policy test passes.
+
+### [x] Task 3: Document autonomous investigation
 
 **Files:**
-- Modify: `package.json`
-- Modify: `package-lock.json`
+- Modify: `README.md:29-35`
+- Test: `tests/unit/documentation.test.ts`
 
-- [x] Run `npm run check`.
-- [x] Run `npm run test:e2e`.
-- [x] Bump 0.1.0 to 0.1.1 with the SDD bump-version workflow.
-- [x] Run `npm pack --dry-run` and `npm publish --dry-run`.
+- [x] **Step 1: Add the workflow statement**
 
-**Verification**: All automated checks pass and the packed public artifact reports version 0.1.1.
+Append this paragraph to the README Workflow section:
 
-Implementation note: `npm run check` passes 116 unit and 23 integration tests, `npm run test:e2e` passes 14 tests, and both npm dry runs report the public package as `@maximtop/opencode-debug-mode@0.1.1`. The project intentionally has no changelog; release notes remain generated by GitHub as defined by the release contract.
+```markdown
+Safe local investigation and temporary instrumentation proceed autonomously. The agent asks the developer only for an undiscoverable blocker, required external authorization, or a prepared human checkpoint: after instrumentation it may ask whether the issue reproduced, and after the evidence-backed fix and automated checks it may ask whether the same reproduction is now fixed. It never asks the developer to select a speculative fix instead of collecting evidence.
+```
 
-### [x] Task 4: Prepare the v0.1.1 release handoff
+- [x] **Step 2: Run the focused documentation test**
+
+Run: `npx vitest run tests/unit/documentation.test.ts`
+
+Expected: PASS.
+
+**Verification**: Public documentation matches the prompt's act-before-ask contract.
+
+Implementation note: the README Workflow section now documents autonomous safe investigation, genuine blockers, and the prepared pre-fix/post-fix human checkpoints. The focused documentation test passes.
+
+### [x] Task 4: Verify the complete change
 
 **Files:**
 - Modify: `.sdd/.current/quick.md`
 
-- [x] Confirm the repository is public, its default branch is `master`, and local `HEAD` matches `origin/master` before the release commit.
-- [x] Confirm tag, GitHub Release, and npm version `0.1.1` do not already exist.
-- [x] Confirm the tag workflow will gate publication on green tests and publish its prepared tarball through npm Trusted Publishing.
-- [x] Define the post-commit rollout and acceptance checks.
+- [x] **Step 1: Run project checks**
 
-**Verification**: The release can start from a collision-free 0.1.1 commit after hosted CI succeeds.
+Run: `npm run check`
+
+Expected: lint, typecheck, unit tests, build, and integration tests pass.
+
+- [x] **Step 2: Run end-to-end tests**
+
+Run: `npm run test:e2e`
+
+Expected: all E2E tests pass.
+
+- [x] **Step 3: Inspect the final diff**
+
+Run: `git diff --check && git diff --stat`
+
+Expected: before the separate release preparation, only the prompt, policy/documentation tests, README, and this quick spec change; package version remains 0.1.1.
+
+**Verification**: All project gates pass before the separate version-bump and release workflow.
+
+Implementation note: `npm run check` passes 117 unit and 23 integration tests, and `npm run test:e2e` passes 14 tests. A clean OpenCode 1.18.1 resolved-agent check loaded the local built plugin with Question enabled and all new autonomy, deliberate-human-checkpoint, observation-only, and evidence-before-fix prompt clauses present. `git diff --check` passes. The implementation gate completed at 0.1.1; the separate release chore then updated package metadata to 0.1.2.
 
 ## Final Verification
 
-- [x] Focused unit regression test passes.
-- [x] Packed-install tests pass for OpenCode 1.17.0 and 1.18.1.
+- [x] Focused policy tests fail before the prompt/README change and pass afterward.
+- [x] The prompt forbids speculative fix-choice questions while safe local work remains.
+- [x] Deterministic reproduction is preferred and owned temporary instrumentation proceeds autonomously.
+- [x] Human reproduction is requested only after baseline transport, probes, validation, and checkpoint readiness.
+- [x] Questions ask for observations at prepared pre-fix and post-fix checkpoints, never speculative implementation choices.
+- [x] A human pre-fix reproduction requires the corresponding post-fix verification before cleanup or success.
+- [x] Evidence is still required before a behavioral fix.
 - [x] `npm run check` and `npm run test:e2e` pass.
-
-## Release Acceptance
-
-After the implementation commit is pushed, wait for hosted CI before tagging. The `v0.1.1` workflow must create the GitHub Release and checksum, publish npm `latest`, preserve matching integrity between both registries, attach provenance, pass a clean install/import, and resolve the intended permissions on OpenCode 1.18.1.
+- [x] The implementation gate completed at version 0.1.1 without external mutation; separate release preparation updated package metadata to 0.1.2.
 
 ## Notes
 
-No README change is required because installation and runtime commands are unchanged. The change only restores the question capability that a hypothesis-driven debugging agent needs while retaining OpenCode's guardrails around plan-mode transitions.
+This is a prompt-policy bug, not an AG-55256 product fix. The screenshots provide deterministic evidence of the missing guard, so a runtime log collector is unnecessary. Model behavior cannot be perfectly proven by a static test, but exact imperative policy assertions prevent this regression from silently disappearing and materially reduce cross-model variance.

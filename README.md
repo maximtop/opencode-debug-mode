@@ -30,6 +30,8 @@ Restart OpenCode, select the `debug` agent or run `/debug describe the runtime f
 
 The agent records scope and two to four falsifiable hypotheses, captures a failing `pre-fix` baseline, adds the smallest owned probe, analyzes correlated evidence, applies only the confirmed fix, creates a distinct `post-fix` run, and cleans every owned resource. Durable revisioned state allows the workflow to resume after compaction or restart without repeating conclusive checks.
 
+Safe local investigation and temporary instrumentation proceed autonomously. The agent asks the developer only for an undiscoverable blocker, required external authorization, or a prepared human checkpoint: after instrumentation it may ask whether the issue reproduced, and after the evidence-backed fix and automated checks it may ask whether the same reproduction is now fixed. It never asks the developer to select a speculative fix instead of collecting evidence.
+
 CLI targets run below a watchdog supervisor. Web targets use an authenticated server bound only to loopback. Extension content scripts relay through the existing messaging style; only the background helper can reach loopback.
 
 See the runnable patterns in:

@@ -1,6 +1,6 @@
 {
   "name": "@maximtop/opencode-debug-mode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Hypothesis-driven runtime debugging agent for OpenCode",
   "license": "MIT",
   "repository": {
