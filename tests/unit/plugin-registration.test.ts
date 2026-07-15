@@ -6,6 +6,7 @@ describe("OpenCode plugin", () => {
     const harness = await pluginHarness()
     const config = await harness.applyConfig({})
     expect(config.agent?.debug).toMatchObject({ mode: "primary" })
+    expect(config.agent?.debug?.permission).toEqual({ question: "allow" })
     expect(config.agent?.debug?.prompt).toContain("Hypothesis-driven runtime debugging")
     expect(config.command?.debug).toEqual({
       description: "Start hypothesis-driven runtime debugging",

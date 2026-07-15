@@ -15,7 +15,13 @@ function npmCommand(args: string[]): [string, string[]] {
 }
 
 export async function installPackedPluginAndReadConfig(version: string): Promise<{
-  agent: { debug: { mode: string } }
+  agent: {
+    debug: {
+      mode: string
+      permission: { question: string; plan_enter: string; plan_exit: string }
+      tools: { question: boolean }
+    }
+  }
   command: { debug: { agent: string; template: string } }
 }> {
   const directory = await mkdtemp(path.join(tmpdir(), "opencode-debug-install-"))
@@ -40,18 +46,19 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
     const home = path.join(directory, "home")
     const configHome = path.join(home, ".config")
     await mkdir(configHome, { recursive: true })
+    const environment = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CACHE_HOME: path.join(home, ".cache"),
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: path.join(home, ".local", "share"),
+      OPENCODE_CONFIG_DIR: path.join(configHome, "opencode"),
+    }
     const resolved = await execute(executable, ["debug", "config"], {
       cwd: directory,
       timeout: OPENCODE_INSTALL_TIMEOUT_MS,
-      env: {
-        ...process.env,
-        HOME: home,
-        USERPROFILE: home,
-        XDG_CACHE_HOME: path.join(home, ".cache"),
-        XDG_CONFIG_HOME: configHome,
-        XDG_DATA_HOME: path.join(home, ".local", "share"),
-        OPENCODE_CONFIG_DIR: path.join(configHome, "opencode"),
-      },
+      env: environment,
     })
     let config: {
       agent?: { debug?: { mode?: unknown } }
@@ -69,8 +76,39 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
         `OpenCode did not register debug definitions. stderr: ${resolved.stderr.slice(0, 2_000)} stdout: ${resolved.stdout.slice(0, 2_000)}`,
       )
     }
+    const resolvedAgent = await execute(executable, ["debug", "agent", "debug"], {
+      cwd: directory,
+      timeout: OPENCODE_INSTALL_TIMEOUT_MS,
+      env: environment,
+    })
+    let agentDetails: {
+      permission?: Array<{ permission?: unknown; action?: unknown }>
+      tools?: { question?: unknown }
+    }
+    try {
+      agentDetails = JSON.parse(resolvedAgent.stdout) as typeof agentDetails
+    } catch {
+      throw new Error(`OpenCode returned invalid resolved agent: ${resolvedAgent.stdout.slice(0, 1_000)}`)
+    }
+    const permissionAction = (permission: string): string => {
+      const action = agentDetails.permission?.filter((rule) => rule.permission === permission).at(-1)?.action
+      if (typeof action !== "string") {
+        throw new Error(`OpenCode returned no ${permission} permission for the debug agent`)
+      }
+      return action
+    }
     return {
-      agent: { debug: { mode: String(agent.mode) } },
+      agent: {
+        debug: {
+          mode: String(agent.mode),
+          permission: {
+            question: permissionAction("question"),
+            plan_enter: permissionAction("plan_enter"),
+            plan_exit: permissionAction("plan_exit"),
+          },
+          tools: { question: agentDetails.tools?.question === true },
+        },
+      },
       command: { debug: { agent: String(command.agent), template: String(command.template) } },
     }
   } finally {

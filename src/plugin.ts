@@ -269,10 +269,13 @@ export function createDebugModePlugin(options: DebugModePluginOptions = {}): Plu
         if (config.command?.debug !== undefined) logCollision("command.debug")
         config.agent ??= {}
         config.command ??= {}
+        // OpenCode accepts arbitrary permission names, while its generated 1.x Config type lists only legacy keys.
+        const permission: Record<string, "allow" | "ask" | "deny"> = { question: "allow" }
         config.agent.debug = {
           mode: "primary",
           description: "Hypothesis-driven runtime debugging",
           prompt,
+          permission,
         }
         config.command.debug = {
           description: "Start hypothesis-driven runtime debugging",
