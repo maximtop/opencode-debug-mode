@@ -13,6 +13,12 @@ function getJob(workflow: string, name: string): string {
 }
 
 describe("release workflow", () => {
+  it("builds the process supervisor before process-backed unit tests", async () => {
+    const pkg = JSON.parse(await readFile("package.json", "utf8")) as { scripts: { check: string } }
+
+    expect(pkg.scripts.check.indexOf("npm run build")).toBeLessThan(pkg.scripts.check.indexOf("npm run test"))
+  })
+
   it("runs one ordered release pipeline for version tags", async () => {
     const workflow = await readFile(".github/workflows/release.yml", "utf8")
     const jobs = workflow.slice(workflow.indexOf("\njobs:\n"))

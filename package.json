@@ -69,7 +69,7 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",
     "coverage": "npm run build && vitest run --coverage",
-    "check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run test:integration"
+    "check": "npm run lint && npm run typecheck && npm run build && npm run test && npm run test:integration"
   },
   "keywords": [
     "opencode",
