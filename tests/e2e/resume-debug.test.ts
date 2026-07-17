@@ -5,17 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest"
 import { createDebugModePlugin } from "../../src/plugin.js"
 import { pluginHarness } from "../helpers/factories.js"
 
-const phases = [
-  "intake",
-  "hypotheses",
-  "baseline",
-  "instrumenting",
-  "waiting_for_reproduction",
-  "analyzing",
-  "fixing",
-  "verifying",
-  "cleaning",
-] as const
+const phases = ["intake", "hypotheses", "baseline", "analyzing"] as const
 
 function parse(value: unknown) {
   // biome-ignore lint/suspicious/noExplicitAny: tool envelopes vary by phase and are asserted at their use sites.
@@ -52,6 +42,15 @@ describe("resume acceptance", () => {
                 confirmationSignals: ["event_done"],
                 eliminationSignals: ["branch is true"],
                 status: "confirmed",
+                evidenceRefs: ["event_done"],
+              },
+              {
+                id: "hyp_B",
+                rank: 2,
+                statement: "Runtime input differs",
+                confirmationSignals: ["input differs"],
+                eliminationSignals: ["input matches"],
+                status: "eliminated",
                 evidenceRefs: ["event_done"],
               },
             ],

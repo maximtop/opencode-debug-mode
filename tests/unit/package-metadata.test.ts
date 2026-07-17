@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
+import { readPackageVersion } from "../../src/core/package-metadata.js"
 
 describe("package metadata", () => {
   it("publishes one ESM OpenCode plugin for Node 20+", async () => {
@@ -23,5 +24,6 @@ describe("package metadata", () => {
       registry: "https://registry.npmjs.org/",
       provenance: true,
     })
+    expect(await readPackageVersion()).toBe(pkg.version)
   })
 })

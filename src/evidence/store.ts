@@ -95,6 +95,25 @@ export class EvidenceStore {
     return { ...page, counters: EvidenceCountersSchema.parse(this.counters) }
   }
 
+  async findByIds(eventIds: readonly string[]): Promise<EvidenceEvent[]> {
+    const pending = new Set(eventIds)
+    const found: EvidenceEvent[] = []
+    let cursor: string | undefined
+    while (pending.size > 0) {
+      const page = await readEvidence(this.filename, {
+        eventIds: [...pending],
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
+      for (const event of page.events) {
+        if (pending.delete(event.eventId)) found.push(event)
+      }
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    return found
+  }
+
   snapshotCounters(): EvidenceCounters {
     return EvidenceCountersSchema.parse(this.counters)
   }

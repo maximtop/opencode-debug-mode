@@ -28,9 +28,15 @@ Restart OpenCode, select the `debug` agent or run `/debug describe the runtime f
 
 ## Workflow
 
-The agent records scope and two to four falsifiable hypotheses, captures a failing `pre-fix` baseline, adds the smallest owned probe, analyzes correlated evidence, applies only the confirmed fix, creates a distinct `post-fix` run, and cleans every owned resource. Durable revisioned state allows the workflow to resume after compaction or restart without repeating conclusive checks.
+The agent visibly presents two to four ranked falsifiable hypotheses, records them with the scope, captures a failing `pre-fix` baseline, adds the smallest owned probe set that distinguishes them, and shows the evidence decision before applying only the confirmed fix. A potentially failing operation is observed before and after so downstream silence is not mistaken for a diagnosis. It then creates a distinct same-path `post-fix` run and cleans every owned resource. Durable revisioned state allows the workflow to resume after compaction or restart without repeating conclusive checks.
+
+Executable lifecycle gates protect mutation, evidence, verification, and cleanup boundaries. Debug Mode blocks ordinary behavioral edits until a completed pre-fix run reproduced the issue, a confirmed hypothesis references persisted runtime evidence, and the intended file scope is checkpointed. A completed report additionally requires persisted post-fix evidence showing that the same symptom no longer reproduces. Human-reproduced baselines require corresponding human post-fix verification. Prompt policy and the [real OpenCode behavioral harness](docs/behavioral-acceptance.md) separately test investigation quality. Its primary fixture is intentionally small enough to distinguish protocol/model failures from large-repository context pressure; AG-55256 remains a secondary realistic smoke test.
 
 Safe local investigation and temporary instrumentation proceed autonomously. The agent asks the developer only for an undiscoverable blocker, required external authorization, or a prepared human checkpoint: after instrumentation it may ask whether the issue reproduced, and after the evidence-backed fix and automated checks it may ask whether the same reproduction is now fixed. It never asks the developer to select a speculative fix instead of collecting evidence.
+
+When a bounded code read disproves a provisional hypothesis, the agent checkpoints the corrected slate and shows its fresh receipt before instrumentation. Browser and extension reproduction Questions include the checked-in build command, the exact artifact to reload, and the original in-application steps.
+
+The first scope checkpoint preserves the reported runtime boundary. A provided browser, extension, device, or external-state procedure is recorded with `reproduction.requiresUser=true`. The value may be `false` only when an existing supervised command already reproduces the exact same runtime symptom across the same relevant boundary; a local Node, fetch, mock, fixture, or test approximation is not equivalent. After the first baseline run starts, `true` can never become `false`. A mistaken `false` can become `true` only when every run is terminal and a new hypothesis iteration starts before deciding evidence or any behavioral fix.
 
 CLI targets run below a watchdog supervisor. Web targets use an authenticated server bound only to loopback. Extension content scripts relay through the existing messaging style; only the background helper can reach loopback.
 
@@ -68,6 +74,7 @@ Generated probes target JavaScript and TypeScript only. The two transports are s
 - If a probe cannot register, reapply the exact marker returned by the preparation tool and retry the project parse/type/build check.
 - If cleanup is partial, preserve the reported marker or permission and review it manually; unrelated edits are intentionally never overwritten.
 - If a checkpoint is invalid or incompatible, follow the explicit recovery result rather than restarting the investigation silently.
+- OpenCode does not hot-reload an npm plugin into an already running server. After upgrading, close every OpenCode window/server for that workspace and start it again. The first `debug_session_start` result reports the loaded package version and prompt SHA-256; use those values to detect a stale process.
 
 ## Uninstall
 

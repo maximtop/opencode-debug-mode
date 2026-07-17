@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process"
-import { createHash } from "node:crypto"
-import { readFile, rm } from "node:fs/promises"
+import { rm } from "node:fs/promises"
 import { performance } from "node:perf_hooks"
 import type { z } from "zod"
 import type { CollectorServer } from "../collector/server.js"
 import { DebugModeError } from "../core/errors.js"
 import { removeLoopbackPermission } from "../probes/extension-permissions.js"
 import { removeOwnedProbe } from "../probes/remove.js"
+import { removeExactCanonicalProjectFile } from "../probes/source-safety.js"
 import { terminateTree } from "../process/tree.js"
 import type { DebugSession } from "../session/registry.js"
-import type { OwnedFileManifestSchema, ProcessManifestSchema } from "../session/types.js"
+import type { CleanupManifest, OwnedFileManifestSchema, ProcessManifestSchema } from "../session/types.js"
 import { finalizeRetainedBundle, type StagedBundle, stageRetainedBundle } from "./export.js"
 import { type CleanupResult, type FinalReportInput, FinalReportInputSchema } from "./types.js"
 
@@ -37,9 +37,16 @@ export class CleanupService {
     cleanCheck?: { executable: string; args: string[]; cwd: string; timeoutMs: number }
   }): Promise<CleanupResult> {
     if (this.completed !== undefined) return this.completed
-    this.running ??= this.execute(input)
-    this.completed = await this.running
-    return this.completed
+    const attempt = this.running ?? this.execute(input)
+    this.running = attempt
+    try {
+      const result = await attempt
+      this.completed ??= result
+      return this.completed
+    } catch (error) {
+      if (this.running === attempt) this.running = undefined
+      throw error
+    }
   }
 
   private async execute(input: {
@@ -49,13 +56,16 @@ export class CleanupService {
   }): Promise<CleanupResult> {
     const started = performance.now()
     const finalReport = FinalReportInputSchema.parse(input.finalReport)
-    const manifest = await this.session.manifestStore
-      .modify((value) => ({
+    let manifest: CleanupManifest | undefined
+    try {
+      manifest = await this.session.manifestStore.modify((value) => ({
         ...value,
         status: "cleaning",
         cleanup: { status: "running", completedResources: [] },
       }))
-      .catch(() => this.session.manifestStore.read())
+    } catch {
+      manifest = await this.session.manifestStore.read().catch(() => undefined)
+    }
     const state = await this.session.investigationStore.read().catch(() => undefined)
     if (state !== undefined) {
       await this.session.investigationStore
@@ -68,7 +78,9 @@ export class CleanupService {
     }
 
     let collector: ResourceResult = { status: "skipped", reason: "not-running" }
-    if (manifest.collector !== null) {
+    if (manifest === undefined && this.dependencies.collector === undefined) {
+      collector = { status: "failed", reason: "cleanup-manifest-unavailable" }
+    } else if (manifest === undefined || manifest.collector !== null) {
       if (this.dependencies.collector === undefined)
         collector = { status: "failed", reason: "collector-runtime-unavailable" }
       else {
@@ -82,7 +94,11 @@ export class CleanupService {
     }
 
     const processes: ResourceResult[] = []
-    for (const owned of manifest.processes) {
+    for (const owned of manifest?.processes ?? []) {
+      if (owned.status !== "starting" && owned.status !== "running") {
+        processes.push({ status: "already-clean" })
+        continue
+      }
       try {
         if (this.dependencies.terminateProcess !== undefined)
           processes.push(await this.dependencies.terminateProcess(owned))
@@ -96,18 +112,28 @@ export class CleanupService {
     }
 
     const probes: ResourceResult[] = []
-    for (const probe of manifest.probes) {
-      const result = await removeOwnedProbe(probe)
-      probes.push({
+    const failedTransportProbeIds = new Set<string>()
+    const probeCleanupOrder = (manifest?.probes ?? [])
+      .map((probe, index) => ({ probe, index }))
+      .sort((left, right) => Number(left.probe.status === "removed") - Number(right.probe.status === "removed"))
+    for (const { probe, index } of probeCleanupOrder) {
+      const result = await removeOwnedProbe(probe, this.session.projectRoot)
+      if (probe.transport !== "process" && result.status === "failed") failedTransportProbeIds.add(probe.id)
+      probes[index] = {
         status: result.status === "already-clean" ? "already-clean" : result.status,
         ...(result.reason === undefined ? {} : { reason: result.reason }),
-        location: probe.sourceFile,
-      })
+        location: result.file,
+      }
     }
 
     const permissions: ResourceResult[] = []
-    for (const change of manifest.permissionChanges) {
-      const result = await removeLoopbackPermission(change.manifestPath, change)
+    for (const change of manifest?.permissionChanges ?? []) {
+      let result: Awaited<ReturnType<typeof removeLoopbackPermission>>
+      try {
+        result = await removeLoopbackPermission(this.session.projectRoot, change.manifestPath, change)
+      } catch {
+        result = { status: "failed", reason: "permission-removal-failed" }
+      }
       permissions.push({
         status: result.status,
         ...(result.reason === undefined ? {} : { reason: result.reason }),
@@ -115,12 +141,27 @@ export class CleanupService {
       })
     }
 
-    const files: ResourceResult[] = []
-    for (const owned of manifest.ownedFiles) files.push(await this.removeOwnedFile(owned))
+    const files: ResourceResult[] =
+      manifest === undefined
+        ? [
+            {
+              status: "failed",
+              reason: "cleanup-manifest-unavailable",
+              location: this.session.paths.manifestFile,
+            },
+          ]
+        : []
+    for (const owned of manifest?.ownedFiles ?? []) {
+      if (owned.kind === "transport-helper" && failedTransportProbeIds.size > 0) {
+        files.push({ status: "failed", reason: "related-probe-cleanup-failed", location: owned.path })
+        continue
+      }
+      files.push(await this.removeOwnedFile(owned))
+    }
 
     const cleanCheck = input.cleanCheck === undefined ? undefined : await this.runCleanCheck(input.cleanCheck)
     let staged: StagedBundle | undefined
-    if (manifest.keepArtifacts && manifest.retentionDestination !== undefined) {
+    if (manifest?.keepArtifacts === true && manifest.retentionDestination !== undefined) {
       try {
         staged = await stageRetainedBundle({
           keepArtifacts: true,
@@ -146,11 +187,19 @@ export class CleanupService {
     }
 
     let sessionDirectory: ResourceResult
-    try {
-      await rm(this.session.paths.sessionDir, { recursive: true, force: true })
-      sessionDirectory = { status: "success" }
-    } catch {
-      sessionDirectory = { status: "failed", reason: "session-directory-removal-failed" }
+    if (manifest === undefined) {
+      sessionDirectory = {
+        status: "failed",
+        reason: "cleanup-manifest-unavailable",
+        location: this.session.paths.sessionDir,
+      }
+    } else {
+      try {
+        await rm(this.session.paths.sessionDir, { recursive: true, force: true })
+        sessionDirectory = { status: "success" }
+      } catch {
+        sessionDirectory = { status: "failed", reason: "session-directory-removal-failed" }
+      }
     }
 
     const resources = { collector, processes, probes, permissions, files, secret, sessionDirectory }
@@ -186,14 +235,17 @@ export class CleanupService {
 
   private async removeOwnedFile(owned: OwnedFile): Promise<ResourceResult> {
     try {
-      const content = await readFile(owned.path)
-      if (createHash("sha256").update(content).digest("hex") !== owned.sha256 || content.byteLength !== owned.bytes) {
+      const status = await removeExactCanonicalProjectFile(
+        this.session.projectRoot,
+        owned.path,
+        owned.sha256,
+        owned.bytes,
+      )
+      if (status === "content-mismatch") {
         return { status: "failed", reason: "owned-file-hash-mismatch", location: owned.path }
       }
-      await rm(owned.path)
-      return { status: "success", location: owned.path }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "already-clean", location: owned.path }
+      return { status, location: owned.path }
+    } catch {
       return { status: "failed", reason: "owned-file-removal-failed", location: owned.path }
     }
   }

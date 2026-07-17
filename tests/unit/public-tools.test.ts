@@ -8,10 +8,12 @@ const expectedNames = [
   "debug_state_read",
   "debug_state_checkpoint",
   "debug_run_start",
+  "debug_run_finish",
   "debug_process_capture",
   "debug_collector_start",
   "debug_probe_prepare",
   "debug_probe_register",
+  "debug_probe_remove",
   "debug_evidence_read",
   "debug_cleanup",
 ]

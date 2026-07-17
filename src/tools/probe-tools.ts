@@ -1,5 +1,6 @@
 import path from "node:path"
 import { type ToolDefinition, tool } from "@opencode-ai/plugin"
+import { validateInstrumentationAuthorization } from "../investigation/gates.js"
 import type { ProbeRegistry } from "../probes/registry.js"
 import type { DebugSession, SessionRegistry } from "../session/registry.js"
 import { jsonFailure, jsonSuccess } from "./common.js"
@@ -16,8 +17,23 @@ export function createProbePrepareTool(
       runId: schema.string().regex(/^[A-Za-z0-9_-]+$/),
       hypothesisId: schema.string().regex(/^[A-Za-z0-9_-]+$/),
       sourceFile: schema.string().min(1).max(8_192),
-      sourceLine: schema.number().int().positive(),
-      sourceColumn: schema.number().int().positive().optional(),
+      helperSourceFile: schema
+        .string()
+        .min(1)
+        .max(8_192)
+        .optional()
+        .describe("Only for extension-content: the loaded background module that owns the transport listener import"),
+      sourceLine: schema
+        .number()
+        .int()
+        .positive()
+        .describe("The first untouched original line after the probe; the marker is inserted immediately before it"),
+      sourceColumn: schema
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Diagnostic metadata only; marker placement is always before sourceLine"),
       message: schema.string().min(1).max(8_192),
       captures: schema
         .array(
@@ -35,10 +51,12 @@ export function createProbePrepareTool(
     execute: async (args, context) => {
       try {
         const session = await registry.requireOwned(context.sessionID)
-        const { sourceColumn, ...required } = args
+        await validateInstrumentationAuthorization(session, args.runId, args.transport)
+        const { sourceColumn, helperSourceFile, ...required } = args
         const probe = await probesFor(session).plan({
           ...required,
           ...(sourceColumn === undefined ? {} : { sourceColumn }),
+          ...(helperSourceFile === undefined ? {} : { helperSourceFile }),
         })
         await registry.touch(context.sessionID)
         return jsonSuccess({
@@ -46,6 +64,15 @@ export function createProbePrepareTool(
           markerBlock: probe.markerBlock,
           source: path.relative(session.projectRoot, probe.sourceFile),
           line: probe.sourceLine,
+          sourceLineText: probe.sourceLineText,
+          sourceContext: probe.sourceContext,
+          markerEdit: probe.markerEdit,
+          ...(probe.helperImportBlock === undefined
+            ? {}
+            : {
+                helperImportBlock: probe.helperImportBlock,
+                helperImportSource: path.relative(session.projectRoot, probe.helperSourceFile ?? probe.sourceFile),
+              }),
         })
       } catch (error) {
         return jsonFailure(error, "Probe preparation failed")
@@ -64,11 +91,33 @@ export function createProbeRegisterTool(
     execute: async (args, context) => {
       try {
         const session = await registry.requireOwned(context.sessionID)
+        await validateInstrumentationAuthorization(session)
         const probe = await probesFor(session).register(args.probeId)
         await registry.touch(context.sessionID)
         return jsonSuccess({ probeId: probe.id, status: probe.status, validationStatus: probe.validationStatus })
       } catch (error) {
         return jsonFailure(error, "Probe registration failed")
+      }
+    },
+  })
+}
+
+export function createProbeRemoveTool(
+  registry: SessionRegistry,
+  probesFor: (session: DebugSession) => ProbeRegistry,
+): ToolDefinition {
+  return tool({
+    description:
+      "Remove one exact owned probe marker and its companion helper import; safe in any lifecycle phase and preserves the probe's historical validation",
+    args: { probeId: schema.string().regex(/^[A-Za-z0-9_-]+$/) },
+    execute: async (args, context) => {
+      try {
+        const session = await registry.requireOwned(context.sessionID)
+        const probe = await probesFor(session).remove(args.probeId)
+        await registry.touch(context.sessionID)
+        return jsonSuccess({ probeId: probe.id, status: probe.status, validationStatus: probe.validationStatus })
+      } catch (error) {
+        return jsonFailure(error, "Probe removal failed")
       }
     },
   })

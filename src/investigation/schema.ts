@@ -3,6 +3,7 @@ import { LIMITS, STATE_SCHEMA_VERSION } from "../core/constants.js"
 import { IsoTimestampSchema, OpaqueIdSchema, RunLabelSchema } from "../core/schemas.js"
 
 const Text = z.string().max(LIMITS.scalarBytes)
+const NonEmptyText = z.string().trim().min(1).max(LIMITS.scalarBytes)
 const TextList = (maximum: number) => z.array(Text).max(maximum)
 const EvidenceIds = z.array(OpaqueIdSchema).max(500)
 
@@ -10,9 +11,9 @@ export const HypothesisSchema = z
   .object({
     id: OpaqueIdSchema,
     rank: z.number().int().min(1).max(4),
-    statement: Text,
-    confirmationSignals: TextList(20),
-    eliminationSignals: TextList(20),
+    statement: NonEmptyText,
+    confirmationSignals: z.array(NonEmptyText).min(1).max(20),
+    eliminationSignals: z.array(NonEmptyText).min(1).max(20),
     status: z.enum(["open", "confirmed", "eliminated"]),
     evidenceRefs: EvidenceIds,
     invalidatedBy: Text.optional(),
@@ -36,6 +37,9 @@ export const RunReferenceSchema = z
     id: OpaqueIdSchema,
     label: RunLabelSchema,
     status: z.enum(["planned", "running", "waiting", "completed", "failed", "timed_out", "cancelled"]),
+    issueReproduced: z.boolean().nullable().optional(),
+    observationSource: z.enum(["deterministic", "human"]).optional(),
+    observation: Text.optional(),
     evidenceRefs: EvidenceIds,
   })
   .strict()
@@ -58,6 +62,23 @@ export const DecisionSchema = z
   .object({ id: OpaqueIdSchema, summary: Text, evidenceRefs: EvidenceIds, decidedAt: IsoTimestampSchema })
   .strict()
 
+const ReproductionSchema = z
+  .object({
+    method: Text.describe(
+      "The exact pre-fix procedure that exercises the reported runtime boundary; preserve the developer-provided interactive steps instead of replacing them with an approximation",
+    ),
+    requiresUser: z
+      .boolean()
+      .describe(
+        "At the first checkpoint, set true whenever the provided procedure requires a person to interact with a browser, extension, device, or other external state. Set false only when an existing command that can be supervised by debug_process_capture already reproduces the exact same runtime symptom across the same relevant boundary. A local Node, fetch, mock, fixture, or test approximation does not justify false. After the first baseline run starts, true can never become false; a mistaken false may become true only in a gated new hypothesis iteration after every run is terminal, before deciding evidence or a behavioral fix.",
+      ),
+    confirmed: z.boolean().nullable(),
+  })
+  .strict()
+  .describe(
+    "The authoritative reproduction boundary selected at the first scope checkpoint; after the first baseline run starts only a gated false-to-true recovery at a safe new hypothesis iteration is allowed",
+  )
+
 export const InvestigationStateSchema = z
   .object({
     schemaVersion: z.literal(STATE_SCHEMA_VERSION),
@@ -67,7 +88,7 @@ export const InvestigationStateSchema = z
     expectedBehavior: Text,
     actualBehavior: Text,
     runtimeContext: z.object({ kind: z.enum(["cli", "web", "extension", "other"]), target: Text }).strict(),
-    reproduction: z.object({ method: Text, requiresUser: z.boolean(), confirmed: z.boolean().nullable() }).strict(),
+    reproduction: ReproductionSchema,
     successCriteria: TextList(50),
     phase: z.enum([
       "intake",

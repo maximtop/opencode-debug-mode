@@ -6,16 +6,20 @@ import { fileURLToPath } from "node:url"
 import type { z } from "zod"
 import type { Clock } from "../core/clock.js"
 import { systemClock } from "../core/clock.js"
-import { EVENT_SCHEMA_VERSION } from "../core/constants.js"
+import { EVENT_SCHEMA_VERSION, LIMITS } from "../core/constants.js"
 import { DebugModeError } from "../core/errors.js"
 import type { EvidenceStore } from "../evidence/store.js"
 import { EventInputSchema } from "../evidence/types.js"
 import type { ProbeRegistry } from "../probes/registry.js"
+import { evaluateOutcomePredicate, type OutcomePredicate } from "../run/outcome.js"
 import type { RunService } from "../run/service.js"
 import type { DebugSession } from "../session/registry.js"
 import type { CleanupManifest, ProcessManifestSchema } from "../session/types.js"
+import { resolveExecutablePath } from "./executable-resolver.js"
 import { type DecodedProcessRecord, ProcessLineDecoder, type ProcessStream } from "./line-decoder.js"
+import { resolveNodeRuntime, sanitizedSupervisorEnvironment } from "./node-runtime.js"
 import { parseChildMessage } from "./protocol.js"
+import { type WorktreeReconciliation, WorktreeSnapshot } from "./worktree-snapshot.js"
 
 type OwnedProcess = z.infer<typeof ProcessManifestSchema>
 
@@ -28,6 +32,7 @@ export type ProcessCaptureInput = Readonly<{
   timeoutMs: number
   probeIds?: string[]
   purpose?: "instrumentation-check" | "reproduction" | "verification"
+  outcomePredicate?: OutcomePredicate
   signal?: AbortSignal
 }>
 
@@ -41,6 +46,11 @@ export type ProcessCaptureResult = Readonly<{
   stdoutEvents: number
   stderrEvents: number
   probeEvents: number
+  probeIds: string[]
+  matchingProbeEvents: number
+  issueReproduced: boolean | null
+  outcomePredicate: OutcomePredicate | null
+  resultEvidenceId: string
 }>
 
 function generatedId(prefix: string): string {
@@ -54,6 +64,14 @@ function defaultSupervisorPath(): string {
   return path.resolve(directory, "../../dist/process-supervisor.js")
 }
 
+function isBareNodeExecutable(executable: string): boolean {
+  return /^(?:node|node\.exe)$/iu.test(executable)
+}
+
+function isBareExecutable(executable: string): boolean {
+  return !executable.includes("/") && !executable.includes("\\")
+}
+
 export class ProcessService {
   constructor(
     private readonly dependencies: {
@@ -63,29 +81,95 @@ export class ProcessService {
       acquireLease: () => Promise<() => void>
       probes?: ProbeRegistry
       supervisorPath?: string
+      nodeExecutable?: string
+      resolveExecutable?: (name: string) => string | undefined
+      forkSupervisor?: typeof fork
       clock?: Clock
     },
   ) {}
 
+  private resolvedNodeExecutable: string | undefined
+
   async capture(input: ProcessCaptureInput): Promise<ProcessCaptureResult> {
     const run = await this.dependencies.runs.require(input.runId)
+    if (input.outcomePredicate !== undefined) {
+      await this.dependencies.runs.bindOutcomePredicate(input.runId, input.outcomePredicate)
+    }
     const release = await this.dependencies.acquireLease()
     const clock = this.dependencies.clock ?? systemClock
     const startedAt = clock.monotonicMs()
     const decoder = new ProcessLineDecoder({ maxLineBytes: 8_192 })
     let stdoutEvents = 0
     let stderrEvents = 0
-    let probeEvents = 0
-    let writes: Promise<void> = Promise.resolve()
+    const probeIds = [...new Set(input.probeIds ?? [])]
+    let priorMatchingProbeEventIds = new Set<string>()
+    const records: DecodedProcessRecord[] = []
+    let recordBytes = 0
     let startedUpdate: Promise<void> = Promise.resolve()
     let child: ChildProcess | undefined
     const processId = generatedId("process_")
     const ownerNonce = randomBytes(32).toString("base64url")
+    let snapshot: WorktreeSnapshot | undefined
+    let snapshotReconciled = false
+    let processOwned = false
+
+    const bufferRecord = (record: DecodedProcessRecord): void => {
+      if (records.length >= LIMITS.events) return
+      const bytes = Buffer.byteLength(JSON.stringify(record))
+      if (recordBytes + bytes > LIMITS.evidenceBytes) return
+      records.push(record)
+      recordBytes += bytes
+    }
+
+    const reconcile = async (): Promise<void> => {
+      if (snapshot === undefined || snapshotReconciled) return
+      snapshotReconciled = true
+      const reconciliation = await snapshot.reconcile()
+      if (reconciliation.changedPaths.length === 0 && reconciliation.restored) return
+      if (processOwned) await this.markRejected(processId)
+      throw this.mutationError(reconciliation)
+    }
 
     try {
-      child = fork(this.dependencies.supervisorPath ?? defaultSupervisorPath(), [], {
-        stdio: ["ignore", "pipe", "pipe", "ipc"],
-      })
+      snapshot = await WorktreeSnapshot.create(
+        this.dependencies.session.projectRoot,
+        this.dependencies.session.paths.sessionDir,
+      )
+      priorMatchingProbeEventIds = new Set(await this.matchingProbeEventIds(input.runId, probeIds))
+      const nodeExecutable = this.resolvedNodeExecutable ?? this.dependencies.nodeExecutable ?? resolveNodeRuntime()
+      this.resolvedNodeExecutable = nodeExecutable
+      let targetExecutable = input.executable
+      if (isBareNodeExecutable(input.executable)) {
+        targetExecutable = nodeExecutable
+      } else if (isBareExecutable(input.executable)) {
+        const resolveExecutable =
+          this.dependencies.resolveExecutable ??
+          ((name: string) => resolveExecutablePath(name, { pathValue: process.env.PATH ?? "" }))
+        const resolved = resolveExecutable(input.executable)
+        if (resolved === undefined) {
+          throw new DebugModeError(
+            "PROCESS_START_FAILED",
+            `The supervised executable ${input.executable} could not be resolved to an absolute path`,
+            false,
+            { action: "Install the allowlisted check tool on an absolute PATH entry and retry" },
+          )
+        }
+        targetExecutable = resolved
+      }
+      try {
+        child = (this.dependencies.forkSupervisor ?? fork)(
+          this.dependencies.supervisorPath ?? defaultSupervisorPath(),
+          [],
+          {
+            execPath: nodeExecutable,
+            execArgv: [],
+            env: sanitizedSupervisorEnvironment(),
+            stdio: ["ignore", "pipe", "pipe", "ipc"],
+          },
+        )
+      } catch {
+        throw new DebugModeError("PROCESS_START_FAILED", "Supervisor could not be launched with Node.js")
+      }
       if (child.pid === undefined) throw new DebugModeError("PROCESS_START_FAILED", "Supervisor did not receive a PID")
       await this.waitForMessage(child, "ready", 2_000)
       await this.addOwnedProcess({
@@ -99,17 +183,10 @@ export class ProcessService {
         status: "starting",
         startedAt: clock.now().toISOString(),
       })
+      processOwned = true
 
       const consume = (stream: ProcessStream, chunk: Buffer) => {
-        for (const record of decoder.push(stream, chunk)) {
-          writes = writes
-            .then(() => this.persistRecord(record, input, run.label))
-            .then((kind) => {
-              if (kind === "probe") probeEvents += 1
-              else if (kind === "stdout") stdoutEvents += 1
-              else if (kind === "stderr") stderrEvents += 1
-            })
-        }
+        for (const record of decoder.push(stream, chunk)) bufferRecord(record)
       }
       child.stdout?.on("data", (chunk: Buffer) => consume("stdout", chunk))
       child.stderr?.on("data", (chunk: Buffer) => consume("stderr", chunk))
@@ -133,7 +210,7 @@ export class ProcessService {
 
       child.send({
         type: "start",
-        executable: input.executable,
+        executable: targetExecutable,
         args: input.args,
         cwd: input.cwd,
         env: input.env,
@@ -154,19 +231,51 @@ export class ProcessService {
       }
       if (result.type !== "result") throw new DebugModeError("PROCESS_START_FAILED", "Supervisor returned no result")
       for (const stream of ["stdout", "stderr"] as const) {
-        for (const record of decoder.flush(stream)) {
-          writes = writes
-            .then(() => this.persistRecord(record, input, run.label))
-            .then((kind) => {
-              if (kind === "probe") probeEvents += 1
-              else if (kind === "stdout") stdoutEvents += 1
-              else if (kind === "stderr") stderrEvents += 1
-            })
-        }
+        for (const record of decoder.flush(stream)) bufferRecord(record)
       }
-      await writes
       await startedUpdate
+      await reconcile()
+      for (const record of records) {
+        const kind = await this.persistRecord(record, input, run.label)
+        if (kind === "stdout") stdoutEvents += 1
+        else if (kind === "stderr") stderrEvents += 1
+      }
       await this.markCompleted(processId, result)
+      const matchingProbeEventIds = (await this.matchingProbeEventIds(input.runId, probeIds)).filter(
+        (eventId) => !priorMatchingProbeEventIds.has(eventId),
+      )
+      const probeEvents = matchingProbeEventIds.length
+      const issueReproduced =
+        input.outcomePredicate === undefined ? null : evaluateOutcomePredicate(input.outcomePredicate, result)
+      const resultEvidence = await this.dependencies.evidence.append({
+        schemaVersion: EVENT_SCHEMA_VERSION,
+        eventId: generatedId("event_"),
+        timestamp: clock.now().toISOString(),
+        sessionId: this.dependencies.session.publicId,
+        runId: input.runId,
+        runLabel: run.label,
+        hypothesisId: "hyp_process",
+        probeId: "probe_process",
+        kind: "process.result",
+        message: `${input.purpose ?? "reproduction"} process completed`,
+        data: {
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+          purpose: input.purpose ?? "reproduction",
+          processId,
+          probeIds,
+          probeEvents,
+          matchingProbeEvents: matchingProbeEventIds.length,
+          matchingProbeEventIds,
+          outcomePredicate: input.outcomePredicate ?? null,
+          issueReproduced,
+        },
+        source: { file: "process", line: 1 },
+      })
+      if (resultEvidence.status !== "accepted" || resultEvidence.event === undefined) {
+        throw new DebugModeError("EVIDENCE_UNAVAILABLE", "The process result could not be persisted as evidence")
+      }
       return {
         processId,
         runId: input.runId,
@@ -177,11 +286,68 @@ export class ProcessService {
         stdoutEvents,
         stderrEvents,
         probeEvents,
+        probeIds,
+        matchingProbeEvents: matchingProbeEventIds.length,
+        issueReproduced,
+        outcomePredicate: input.outcomePredicate ?? null,
+        resultEvidenceId: resultEvidence.event.eventId,
       }
+    } catch (error) {
+      if (!snapshotReconciled && child?.connected === true) {
+        child.send({ type: "terminate", reason: "capture-failed" })
+        await this.waitForExit(child, 2_500)
+      }
+      await reconcile()
+      throw error
     } finally {
       if (child?.connected) child.disconnect()
+      if (snapshot !== undefined && !snapshotReconciled) await snapshot.dispose().catch(() => undefined)
       release()
     }
+  }
+
+  private async matchingProbeEventIds(runId: string, probeIds: readonly string[]): Promise<string[]> {
+    if (probeIds.length === 0) return []
+    const selected = new Set(probeIds)
+    const eventIds: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = await this.dependencies.evidence.read({
+        sessionId: this.dependencies.session.publicId,
+        runId,
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
+      for (const event of page.events) {
+        if (event.kind === "probe" && selected.has(event.probeId)) eventIds.push(event.eventId)
+      }
+      cursor = page.nextCursor ?? undefined
+    } while (cursor !== undefined)
+    return eventIds
+  }
+
+  private mutationError(reconciliation: WorktreeReconciliation): DebugModeError {
+    const preview = reconciliation.changedPaths.slice(0, 5).join(", ")
+    const suffix = reconciliation.changedPaths.length > 5 ? ", ..." : ""
+    const residuePreview = reconciliation.residuePaths.slice(0, 3).join(", ")
+    return new DebugModeError(
+      "INVALID_PHASE",
+      reconciliation.restored
+        ? `Supervised command changed protected project files; all changes were restored (${preview}${suffix})`
+        : `Supervised command changed protected project files and ${reconciliation.restorationFailures} restoration step(s) failed${residuePreview.length === 0 ? "" : `; review residue at ${residuePreview}`}`,
+      false,
+      {
+        action: reconciliation.restored
+          ? "Review the checked-in test, build, or check script and repeat with a read-only command"
+          : "Stop debugging and recover the affected worktree files before continuing",
+        details: {
+          changedFiles: reconciliation.changedPaths.length,
+          restored: reconciliation.restored,
+          restorationFailures: reconciliation.restorationFailures,
+          residueFiles: reconciliation.residuePaths.length,
+        },
+      },
+    )
   }
 
   private async persistRecord(
@@ -270,6 +436,21 @@ export class ProcessService {
     }))
   }
 
+  private async markRejected(id: string): Promise<void> {
+    await this.updateManifest((manifest) => ({
+      ...manifest,
+      processes: manifest.processes.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              status: "failed" as const,
+              completedAt: new Date().toISOString(),
+            }
+          : entry,
+      ),
+    }))
+  }
+
   private async updateManifest(mutate: (manifest: CleanupManifest) => CleanupManifest): Promise<void> {
     await this.dependencies.session.manifestStore.modify(mutate)
   }
@@ -295,13 +476,34 @@ export class ProcessService {
         cleanup()
         reject(new DebugModeError("PROCESS_START_FAILED", "Supervisor exited before becoming ready"))
       }
+      const error = () => {
+        cleanup()
+        reject(new DebugModeError("PROCESS_START_FAILED", "Supervisor failed to start with Node.js"))
+      }
       const cleanup = () => {
         clearTimeout(timeout)
         child.off("message", message)
         child.off("exit", exit)
+        child.off("error", error)
       }
       child.on("message", message)
       child.once("exit", exit)
+      child.once("error", error)
+    })
+  }
+
+  private waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        child.off("exit", exited)
+        resolve()
+      }, timeoutMs)
+      const exited = () => {
+        clearTimeout(timeout)
+        resolve()
+      }
+      child.once("exit", exited)
     })
   }
 }

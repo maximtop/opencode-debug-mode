@@ -67,6 +67,7 @@ export type EvidenceFilter = Readonly<{
   from?: string
   to?: string
   keyword?: string
+  eventIds?: readonly string[]
   cursor?: string
   limit?: number
 }>

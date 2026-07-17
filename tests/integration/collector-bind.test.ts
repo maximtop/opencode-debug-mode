@@ -56,4 +56,53 @@ describe("collector binding", () => {
     await server.close()
     expect(server.status).toBe("stopped")
   })
+
+  it("falls back to IPv6 only for unsupported IPv4 loopback errors", async () => {
+    const server = new CollectorServer()
+    const handle = Object.freeze({
+      id: "collector_fixture",
+      host: "::1" as const,
+      port: 12345,
+      status: "ready" as const,
+      close: vi.fn().mockResolvedValue(undefined),
+    })
+    const unsupported = Object.assign(new Error("unsupported"), { code: "EAFNOSUPPORT" })
+    const bind = vi
+      .spyOn(server as unknown as { bind(host: "127.0.0.1" | "::1"): Promise<typeof handle> }, "bind")
+      .mockRejectedValueOnce(unsupported)
+      .mockResolvedValueOnce(handle)
+
+    await expect(server.start()).resolves.toBe(handle)
+    expect(bind).toHaveBeenNthCalledWith(1, "127.0.0.1")
+    expect(bind).toHaveBeenNthCalledWith(2, "::1")
+  })
+
+  it("reports direct and fallback loopback bind failures", async () => {
+    const direct = new CollectorServer()
+    vi.spyOn(direct as unknown as { bind(host: "127.0.0.1" | "::1"): Promise<never> }, "bind").mockRejectedValue(
+      Object.assign(new Error("denied"), { code: "EACCES" }),
+    )
+    await expect(direct.start()).rejects.toMatchObject({ code: "LOOPBACK_BIND_FAILED" })
+    expect(direct.status).toBe("failed")
+
+    const fallback = new CollectorServer()
+    vi.spyOn(fallback as unknown as { bind(host: "127.0.0.1" | "::1"): Promise<never> }, "bind")
+      .mockRejectedValueOnce(Object.assign(new Error("unsupported"), { code: "EADDRNOTAVAIL" }))
+      .mockRejectedValueOnce(new Error("ipv6 unavailable"))
+    await expect(fallback.start()).rejects.toMatchObject({ code: "LOOPBACK_BIND_FAILED" })
+    expect(fallback.status).toBe("failed")
+  })
+
+  it("closes a ready collector whose listener disappeared before teardown", async () => {
+    const server = new CollectorServer()
+    const internal = server as unknown as {
+      state: "stopped" | "starting" | "ready" | "draining" | "failed"
+      server: undefined
+    }
+    internal.state = "ready"
+    internal.server = undefined
+
+    await expect(server.close()).resolves.toBeUndefined()
+    expect(server.status).toBe("stopped")
+  })
 })

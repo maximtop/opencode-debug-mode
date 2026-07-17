@@ -54,4 +54,16 @@ describe("evidence reader", () => {
       await writeFile(paths.evidenceFile, "")
       expect((await store.read()).events).toEqual([])
     }))
+
+  it("rejects each mismatched boundary before returning an event", () =>
+    withTempProject(async ({ paths }) => {
+      const store = new EvidenceStore(paths.evidenceFile)
+      await store.append(eventFixture)
+
+      expect((await store.read({ sessionId: "session_other" })).events).toEqual([])
+      expect((await store.read({ probeId: "probe_other" })).events).toEqual([])
+      expect((await store.read({ from: "2026-07-13T00:00:01.000Z" })).events).toEqual([])
+      expect((await store.read({ to: "2026-07-12T23:59:59.000Z" })).events).toEqual([])
+      await expect(new EvidenceStore(paths.sessionDir).read()).rejects.toMatchObject({ code: "EISDIR" })
+    }))
 })

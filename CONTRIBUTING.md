@@ -17,6 +17,8 @@ npm pack --dry-run
 
 Behavior changes should begin with a failing focused test. Preserve the stable public tool names, machine-readable envelopes, strict schemas, bounded data flow, trusted-session isolation, and exact ownership cleanup. Do not add a new evidence transport or probe language without cross-platform syntax, end-to-end capture, verification, cleanup, security, and stress coverage.
 
+Agent-policy changes must also pass the real OpenCode behavioral acceptance harness against a fresh server and disposable project. The release gate is two consecutive unchanged `tokenguard/deepseek-v4-flash` variant `high` runs of the default `synthetic-cli` profile. Each run must autonomously reproduce the deterministic bug with runtime evidence, apply only the expected one-line fix, verify the same test, clean its instrumentation, and finish without a Question. Run `--profile ag-55256` afterward as the larger Browser Extension smoke test; never point either profile at a developer worktree.
+
 ## Releases
 
 Pushing a supported version tag runs one automated pipeline: prepare and test the package, create the GitHub Release, then publish the exact prepared tarball to npm with provenance. The tag and `package.json` version must match exactly:

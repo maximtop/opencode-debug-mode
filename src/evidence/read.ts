@@ -17,6 +17,7 @@ function matches(event: EvidenceEvent, filter: EvidenceFilter): boolean {
   if (filter.to !== undefined && event.timestamp > filter.to) return false
   if (filter.keyword !== undefined && !JSON.stringify(event).toLowerCase().includes(filter.keyword.toLowerCase()))
     return false
+  if (filter.eventIds !== undefined && !filter.eventIds.includes(event.eventId)) return false
   return true
 }
 

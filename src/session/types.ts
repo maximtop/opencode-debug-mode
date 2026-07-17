@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { LIMITS, MANIFEST_SCHEMA_VERSION, PACKAGE_ID } from "../core/constants.js"
 import { HexSha256Schema, IsoTimestampSchema, OpaqueIdSchema, RunLabelSchema } from "../core/schemas.js"
+import { OutcomePredicateSchema } from "../run/outcome.js"
 
 export const EvidenceCountersSchema = z
   .object({
@@ -29,9 +30,29 @@ export const RunManifestSchema = z
     id: OpaqueIdSchema,
     label: RunLabelSchema,
     reproduction: z.string().max(LIMITS.scalarBytes),
+    reproductionFingerprint: HexSha256Schema.optional(),
+    outcomePredicate: OutcomePredicateSchema.optional(),
+    behavioralRevisionAtStart: z.number().int().nonnegative().optional(),
     status: z.enum(["planned", "running", "waiting", "completed", "failed", "timed_out", "cancelled"]),
+    issueReproduced: z.boolean().nullable().optional(),
+    observationSource: z.enum(["deterministic", "human"]).optional(),
+    observation: z.string().max(LIMITS.scalarBytes).optional(),
     createdAt: IsoTimestampSchema,
     completedAt: IsoTimestampSchema.optional(),
+  })
+  .strict()
+
+export const HumanCheckpointManifestSchema = z
+  .object({
+    requestId: OpaqueIdSchema,
+    runId: OpaqueIdSchema,
+    purpose: z.enum(["reproduction", "verification"]).optional(),
+    reproductionFingerprint: HexSha256Schema.optional(),
+    questionSha256: HexSha256Schema.optional(),
+    askedAt: IsoTimestampSchema,
+    status: z.enum(["asked", "replied", "rejected"]),
+    issueReproduced: z.boolean().nullable().optional(),
+    repliedAt: IsoTimestampSchema.optional(),
   })
   .strict()
 
@@ -56,6 +77,7 @@ export const ProbeManifestSchema = z
     id: OpaqueIdSchema,
     runId: OpaqueIdSchema,
     hypothesisId: OpaqueIdSchema,
+    hypothesisSha256: HexSha256Schema.optional(),
     sourceFile: z.string().min(1),
     sourceLine: z.number().int().positive(),
     sourceColumn: z.number().int().positive().optional(),
@@ -74,6 +96,20 @@ export const ProbeManifestSchema = z
     markerEnd: z.string().min(1),
     expectedBlock: z.string().optional(),
     expectedHash: HexSha256Schema.optional(),
+    markerEditHash: HexSha256Schema.optional(),
+    expectedBlockIsExactInsertion: z.literal(true).optional(),
+    insertionAnchor: z
+      .object({
+        sourceOffset: z.number().int().nonnegative(),
+        indentedSourceOffset: z.number().int().nonnegative(),
+        sourceSha256: HexSha256Schema,
+      })
+      .strict()
+      .optional(),
+    helperSourceFile: z.string().min(1).optional(),
+    helperImportBlock: z.string().min(1).optional(),
+    helperImportHash: HexSha256Schema.optional(),
+    helperImportBlockIsExactInsertion: z.literal(true).optional(),
   })
   .strict()
 
@@ -116,6 +152,27 @@ export const ManifestSchema = z
     lastActivityAt: IsoTimestampSchema,
     expiresAt: IsoTimestampSchema,
     waitingForReproduction: z.boolean(),
+    fixStartedAt: IsoTimestampSchema.optional(),
+    lastBehavioralMutationAt: IsoTimestampSchema.optional(),
+    behavioralRevision: z.number().int().nonnegative().optional(),
+    behavioralMutations: z
+      .array(
+        z
+          .object({
+            revision: z.number().int().positive(),
+            tool: z.string().min(1).max(128),
+            paths: z.array(z.string().min(1).max(LIMITS.scalarBytes)).max(200),
+            completedAt: IsoTimestampSchema,
+          })
+          .strict(),
+      )
+      .max(1_000)
+      .optional(),
+    visibleHypothesesAt: IsoTimestampSchema.optional(),
+    visibleHypothesesSha256: HexSha256Schema.optional(),
+    visibleEvidenceDecisionAt: IsoTimestampSchema.optional(),
+    visibleEvidenceDecisionSha256: HexSha256Schema.optional(),
+    humanCheckpoints: z.array(HumanCheckpointManifestSchema).max(20).optional(),
     keepArtifacts: z.boolean(),
     retentionDestination: z.string().min(1).optional(),
     collector: CollectorManifestSchema.nullable(),

@@ -1,6 +1,6 @@
 {
   "name": "@maximtop/opencode-debug-mode",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Hypothesis-driven runtime debugging agent for OpenCode",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,7 @@
     "@opencode-ai/plugin": ">=1.17.0 <2"
   },
   "dependencies": {
+    "@babel/parser": "^7.29.7",
     "jsonc-parser": "^3.3.1",
     "zod": "^4.4.3"
   },

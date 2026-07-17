@@ -31,6 +31,8 @@ export function createInitialManifest(input: {
     lastActivityAt: input.now,
     expiresAt,
     waitingForReproduction: false,
+    behavioralRevision: 0,
+    behavioralMutations: [],
     keepArtifacts: input.keepArtifacts ?? false,
     collector: null,
     runs: [],

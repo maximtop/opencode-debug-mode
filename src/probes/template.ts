@@ -15,6 +15,7 @@ export type ProbeTemplateInput = Readonly<{
   transport: ProbeTransport
   sampling: ProbeSampling
   contentAdapter?: "chrome.runtime.sendMessage" | "browser.runtime.sendMessage" | "wrapper.sendMessage"
+  emitterIdentifier?: string
 }>
 
 export function createProbeTemplate(input: ProbeTemplateInput): { markerBlock: string } {
@@ -42,7 +43,11 @@ export function createProbeTemplate(input: ProbeTemplateInput): { markerBlock: s
     const adapter = input.contentAdapter ?? "chrome.runtime.sendMessage"
     emission = `void ${adapter}({ type: "opencode-debug-event", event: ${event} })`
   } else {
-    emission = `void __opencodeDebugEmit(${event})`
+    const emitter = input.emitterIdentifier ?? "__opencodeDebugEmit"
+    if (!/^[$A-Z_a-z][$\w]*$/u.test(emitter)) {
+      throw new DebugModeError("UNSAFE_CAPTURE", "Probe emitter identifier is unsafe")
+    }
+    emission = `void ${emitter}(${event})`
   }
   return {
     markerBlock: `/* DEBUG-START ${ownership} */\n${emission}\n/* DEBUG-END ${ownership} */`,

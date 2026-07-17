@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
-import { mkdir, realpath, writeFile } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import path from "node:path"
 import { DebugModeError } from "../core/errors.js"
 import { isContained } from "../session/paths.js"
+import { createCanonicalProjectFile, removeExactCanonicalProjectFile } from "./source-safety.js"
 
 export type TransportHelperResult = Readonly<{
   relativePath: string
@@ -81,30 +82,67 @@ export class TransportHelper {
   }): Promise<TransportHelperResult> {
     const canonicalRoot = await realpath(this.projectRoot)
     const absoluteTarget = path.resolve(canonicalRoot, options.targetPath)
-    if (!isContained(canonicalRoot, absoluteTarget)) {
-      throw new DebugModeError("HELPER_PATH_UNSAFE", "Transport helper must remain inside the project")
+    const action =
+      "Use a new unused project-contained .mjs path; never pass an existing application source or entry module"
+    if (!isContained(canonicalRoot, absoluteTarget) || path.extname(absoluteTarget).toLowerCase() !== ".mjs") {
+      throw new DebugModeError(
+        "HELPER_PATH_UNSAFE",
+        "Transport helper must be a new project-contained .mjs file",
+        false,
+        {
+          action,
+        },
+      )
     }
-    const parent = path.dirname(absoluteTarget)
-    await mkdir(parent, { recursive: true })
-    if ((await realpath(parent)) !== parent) {
-      throw new DebugModeError("HELPER_PATH_UNSAFE", "Transport helper parent is not canonical")
-    }
-    const endpointHost = options.host === "::1" ? "[::1]" : options.host
-    const source = helperSource({
-      endpoint: `http://${endpointHost}:${options.port}/v1/events`,
-      token: options.token,
-      extensionBackground: options.runtime === "extension-background",
-    })
-    await writeFile(absoluteTarget, source, { flag: "wx", mode: 0o600 })
-    const bytes = Buffer.byteLength(source)
-    const sha256 = createHash("sha256").update(source).digest("hex")
-    await this.recordOwnedFile?.({ path: absoluteTarget, sha256, bytes })
-    const relativePath = `./${path.relative(canonicalRoot, absoluteTarget).split(path.sep).join("/")}`
-    return {
-      relativePath,
-      requiredImport: `import { __opencodeDebugEmit } from ${JSON.stringify(relativePath)}`,
-      sha256,
-      bytes,
+    let owned: { path: string; sha256: string; bytes: number } | undefined
+    try {
+      const endpointHost = options.host === "::1" ? "[::1]" : options.host
+      const source = helperSource({
+        endpoint: `http://${endpointHost}:${options.port}/v1/events`,
+        token: options.token,
+        extensionBackground: options.runtime === "extension-background",
+      })
+      const bytes = Buffer.byteLength(source)
+      const sha256 = createHash("sha256").update(source).digest("hex")
+      await createCanonicalProjectFile(canonicalRoot, absoluteTarget, source)
+      owned = { path: absoluteTarget, sha256, bytes }
+      await this.recordOwnedFile?.(owned)
+      const relativePath = `./${path.relative(canonicalRoot, absoluteTarget).split(path.sep).join("/")}`
+      return {
+        relativePath,
+        requiredImport: `import { __opencodeDebugEmit } from ${JSON.stringify(relativePath)}`,
+        sha256,
+        bytes,
+      }
+    } catch (error) {
+      if (owned !== undefined) {
+        let cleanupStatus: "success" | "already-clean" | "content-mismatch" | "failed"
+        try {
+          cleanupStatus = await removeExactCanonicalProjectFile(canonicalRoot, owned.path, owned.sha256, owned.bytes)
+        } catch {
+          cleanupStatus = "failed"
+        }
+        if (cleanupStatus === "content-mismatch" || cleanupStatus === "failed") {
+          throw new DebugModeError(
+            "CLEANUP_PARTIAL",
+            "Transport helper ownership could not be recorded and the helper could not be removed safely",
+            false,
+            {
+              action: `Inspect and remove the unowned transport helper at ${owned.path}`,
+              details: { path: owned.path, cleanupStatus },
+            },
+          )
+        }
+      }
+      if (error instanceof DebugModeError) throw error
+      throw new DebugModeError(
+        "HELPER_PATH_UNSAFE",
+        (error as NodeJS.ErrnoException).code === "EEXIST"
+          ? "Transport helper target already exists"
+          : "Transport helper could not be created safely",
+        false,
+        { action },
+      )
     }
   }
 }

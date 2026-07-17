@@ -1,8 +1,13 @@
-import { readFile, writeFile } from "node:fs/promises"
 import { applyEdits, modify, type ParseError, parse } from "jsonc-parser"
 import type { z } from "zod"
 import { DebugModeError } from "../core/errors.js"
 import type { PermissionChangeSchema } from "../session/types.js"
+import {
+  canonicalProjectFileExists,
+  ProjectFileRewriteRollbackError,
+  readCanonicalProjectFile,
+  rewriteCanonicalProjectFile,
+} from "./source-safety.js"
 
 export type PermissionChange = z.infer<typeof PermissionChangeSchema>
 
@@ -24,11 +29,21 @@ function permissionProperty(manifest: Record<string, unknown>): "permissions" | 
   throw new DebugModeError("PERMISSION_MISMATCH", "Extension manifest version must be 2 or 3")
 }
 
-export async function addLoopbackPermission(manifestPath: string, matchPattern: string): Promise<PermissionChange> {
+export async function addLoopbackPermission(
+  projectRoot: string,
+  manifestPath: string,
+  matchPattern: string,
+  recordProvisionalChange?: (change: PermissionChange) => void,
+): Promise<PermissionChange> {
   if (!LOOPBACK_MATCH.test(matchPattern)) {
     throw new DebugModeError("PERMISSION_MISMATCH", "Only an exact active loopback match pattern is allowed")
   }
-  const text = await readFile(manifestPath, "utf8")
+  let text: string
+  try {
+    text = await readCanonicalProjectFile(projectRoot, manifestPath)
+  } catch {
+    throw new DebugModeError("PERMISSION_MISMATCH", "Extension manifest must be a canonical project file")
+  }
   const manifest = readManifest(text)
   const property = permissionProperty(manifest)
   const current = manifest[property]
@@ -45,18 +60,35 @@ export async function addLoopbackPermission(manifestPath: string, matchPattern: 
         isArrayInsertion: true,
       })
     : modify(text, [property], [matchPattern], { formattingOptions: formatting })
-  await writeFile(manifestPath, applyEdits(text, edits), "utf8")
-  return { manifestPath, property, matchPattern, addedBySession: true }
+  const change = { manifestPath, property, matchPattern, addedBySession: true } as const
+  recordProvisionalChange?.(change)
+  let rewritten: boolean
+  try {
+    rewritten = await rewriteCanonicalProjectFile(projectRoot, manifestPath, text, applyEdits(text, edits))
+  } catch (error) {
+    if (error instanceof ProjectFileRewriteRollbackError) throw error
+    throw new DebugModeError("PERMISSION_MISMATCH", "Extension manifest could not be changed safely")
+  }
+  if (!rewritten) {
+    throw new DebugModeError("PERMISSION_MISMATCH", "Extension manifest changed while permission was being added")
+  }
+  return change
 }
 
 export async function removeLoopbackPermission(
+  projectRoot: string,
   manifestPath: string,
   change: PermissionChange,
 ): Promise<{ status: "success" | "already-clean" | "failed"; reason?: string }> {
   if (!change.addedBySession) return { status: "already-clean" }
+  try {
+    if (!(await canonicalProjectFileExists(projectRoot, manifestPath))) return { status: "already-clean" }
+  } catch {
+    return { status: "failed", reason: "manifest-read-failed" }
+  }
   let text: string
   try {
-    text = await readFile(manifestPath, "utf8")
+    text = await readCanonicalProjectFile(projectRoot, manifestPath)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "already-clean" }
     return { status: "failed", reason: "manifest-read-failed" }
@@ -67,7 +99,13 @@ export async function removeLoopbackPermission(
   } catch {
     return { status: "failed", reason: "manifest-invalid" }
   }
-  if (permissionProperty(manifest) !== change.property) return { status: "failed", reason: "manifest-version-changed" }
+  try {
+    if (permissionProperty(manifest) !== change.property) {
+      return { status: "failed", reason: "manifest-version-changed" }
+    }
+  } catch {
+    return { status: "failed", reason: "manifest-version-changed" }
+  }
   const current = manifest[change.property]
   if (current === undefined) return { status: "already-clean" }
   if (!Array.isArray(current) || current.some((entry) => typeof entry !== "string")) {
@@ -79,6 +117,13 @@ export async function removeLoopbackPermission(
   const index = matches[0]
   if (index === undefined) return { status: "already-clean" }
   const edits = modify(text, [change.property, index], undefined, { formattingOptions: formatting })
-  await writeFile(manifestPath, applyEdits(text, edits), "utf8")
+  try {
+    if (!(await rewriteCanonicalProjectFile(projectRoot, manifestPath, text, applyEdits(text, edits)))) {
+      return { status: "failed", reason: "manifest-changed" }
+    }
+  } catch (error) {
+    if (error instanceof ProjectFileRewriteRollbackError) throw error
+    return { status: "failed", reason: "manifest-write-failed" }
+  }
   return { status: "success" }
 }

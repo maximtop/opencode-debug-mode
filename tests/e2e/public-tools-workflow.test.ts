@@ -43,12 +43,25 @@ describe("public tool workflow", () => {
               status: "open",
               evidenceRefs: [],
             },
+            {
+              id: "hyp_missing",
+              rank: 2,
+              statement: "The runtime value is missing",
+              confirmationSignals: ["probe has no observed value"],
+              eliminationSignals: ["probe reports the observed value"],
+              status: "open",
+              evidenceRefs: [],
+            },
           ],
           nextAction: "capture the value",
         },
       }),
     )
     expect(checkpointed.data.revision).toBe(1)
+    await harness.selectAgent("debug")
+    await harness.completeText(
+      "## Working hypotheses\n1. hyp_value — The runtime value is 42. Confirmation: probe reports 42. Elimination: probe reports another value.\n2. hyp_missing — The runtime value is missing. Confirmation: probe has no observed value. Elimination: probe reports the observed value.",
+    )
 
     const run = parse(
       await harness.executeTool("debug_run_start", {
@@ -57,8 +70,30 @@ describe("public tool workflow", () => {
         waitingForUser: false,
       }),
     )
+    const beforeInstrumentation = parse(await harness.executeTool("debug_state_read", {})).data.state
+    expect(
+      parse(
+        await harness.executeTool("debug_state_checkpoint", {
+          expectedRevision: beforeInstrumentation.revision,
+          state: { ...beforeInstrumentation, phase: "instrumenting" },
+        }),
+      ).ok,
+    ).toBe(true)
     const sourcePath = path.join(harness.projectRoot, "workflow.mjs")
+    const behaviorTestPath = path.join(harness.projectRoot, "workflow.test.mjs")
     await writeFile(sourcePath, "const observed = 42\n")
+    await writeFile(
+      behaviorTestPath,
+      `import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import test from "node:test"
+const source = await readFile(new URL("./workflow.mjs", import.meta.url), "utf8")
+if (!/evidence-backed behavior retained/u.test(source)) await import("./workflow.mjs")
+test("retains the expected behavior", () => {
+  assert.match(source, /evidence-backed behavior retained/u)
+})
+`,
+    )
     const prepared = parse(
       await harness.executeTool("debug_probe_prepare", {
         runId: run.data.runId,
@@ -72,6 +107,16 @@ describe("public tool workflow", () => {
         sampling: { mode: "every", n: 2 },
       }),
     )
+    expect(prepared).toMatchObject({
+      ok: true,
+      data: {
+        sourceLineText: "",
+        sourceContext: [
+          { line: 1, text: "const observed = 42" },
+          { line: 2, text: "" },
+        ],
+      },
+    })
     await writeFile(sourcePath, `const observed = 42\n${prepared.data.markerBlock}\n`)
     expect(parse(await harness.executeTool("debug_probe_register", { probeId: prepared.data.probeId })).ok).toBe(true)
 
@@ -94,9 +139,10 @@ describe("public tool workflow", () => {
       await harness.executeTool("debug_process_capture", {
         approvalClass: "local-deterministic",
         purpose: "reproduction",
+        outcomePredicate: { kind: "exit-code", operator: "not-equals", value: 0 },
         probeIds: [prepared.data.probeId],
         executable: process.execPath,
-        args: [sourcePath],
+        args: ["--test", behaviorTestPath],
         cwd: harness.projectRoot,
         env: {},
         runId: run.data.runId,
@@ -104,6 +150,7 @@ describe("public tool workflow", () => {
       }),
     )
     expect(captured.data.probeEvents).toBe(1)
+    expect(captured.data.issueReproduced).toBe(true)
 
     const evidence = parse(
       await harness.executeTool("debug_evidence_read", { runId: run.data.runId, keyword: "observed", limit: 20 }),
@@ -158,7 +205,7 @@ describe("public tool workflow", () => {
     expect(response.status).toBe(202)
     let sampledEvidence = evidence
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      sampledEvidence = parse(await harness.executeTool("debug_evidence_read", { limit: 20 }))
+      sampledEvidence = parse(await harness.executeTool("debug_evidence_read", { limit: 100 }))
       if (!sampledEvidence.ok) throw new Error(JSON.stringify(sampledEvidence.error))
       if (
         sampledEvidence.data.counters.sampled === 1 &&
@@ -172,21 +219,123 @@ describe("public tool workflow", () => {
       sampledEvidence.data.events.some((event: { message: string }) => event.message === "sampled observed value"),
     ).toBe(true)
 
+    const finishedPreFix = parse(
+      await harness.executeTool("debug_run_finish", {
+        runId: run.data.runId,
+        status: "completed",
+        issueReproduced: true,
+        observationSource: "deterministic",
+        observation: "The baseline reported the incorrect runtime value",
+      }),
+    )
+    expect(finishedPreFix.ok).toBe(true)
+    const beforeFix = parse(await harness.executeTool("debug_state_read", {})).data.state
+    await harness.completeText(
+      `## Evidence decision\nhyp_value confirmed by ${firstEvent.eventId}.\nhyp_missing eliminated by ${firstEvent.eventId}.`,
+    )
+    const fixCheckpoint = parse(
+      await harness.executeTool("debug_state_checkpoint", {
+        expectedRevision: beforeFix.revision,
+        state: {
+          ...beforeFix,
+          reproduction: { ...beforeFix.reproduction, confirmed: true },
+          phase: "fixing",
+          hypotheses: beforeFix.hypotheses.map((hypothesis: { id: string }) =>
+            hypothesis.id === "hyp_value"
+              ? { ...hypothesis, status: "confirmed", evidenceRefs: [firstEvent.eventId] }
+              : { ...hypothesis, status: "eliminated", evidenceRefs: [firstEvent.eventId] },
+          ),
+          singleCauseEvidenceRef: null,
+          decidingEvidenceIds: [firstEvent.eventId],
+          decisions: [
+            {
+              id: "decision_value",
+              summary: "Use the observed runtime value",
+              evidenceRefs: [firstEvent.eventId],
+              decidedAt: new Date().toISOString(),
+            },
+          ],
+          fixedFiles: ["workflow.mjs"],
+          nextAction: "verify the same runtime path",
+        },
+      }),
+    )
+    expect(fixCheckpoint.ok).toBe(true)
+    const fixedSource = `${await readFile(sourcePath, "utf8")}\n// evidence-backed behavior retained\n`
+    const behavioralEdit = {
+      filePath: sourcePath,
+      oldString: await readFile(sourcePath, "utf8"),
+      newString: fixedSource,
+    }
+    await harness.beforeTool("edit", behavioralEdit)
+    await writeFile(sourcePath, fixedSource)
+    await harness.afterTool("edit", {}, "session-A", "call-fixture", behavioralEdit)
+    const beforeVerification = parse(await harness.executeTool("debug_state_read", {})).data.state
+    expect(
+      parse(
+        await harness.executeTool("debug_state_checkpoint", {
+          expectedRevision: beforeVerification.revision,
+          state: {
+            ...beforeVerification,
+            phase: "verifying",
+            nextAction: "verify the same runtime path",
+          },
+        }),
+      ).ok,
+    ).toBe(true)
+    const postFix = parse(
+      await harness.executeTool("debug_run_start", {
+        label: "post-fix",
+        reproduction: "node workflow.mjs",
+        waitingForUser: false,
+      }),
+    )
+    const verificationCapture = parse(
+      await harness.executeTool("debug_process_capture", {
+        approvalClass: "local-deterministic",
+        purpose: "verification",
+        outcomePredicate: { kind: "exit-code", operator: "not-equals", value: 0 },
+        probeIds: [],
+        executable: process.execPath,
+        args: ["--test", behaviorTestPath],
+        cwd: harness.projectRoot,
+        env: {},
+        runId: postFix.data.runId,
+        timeoutMs: 5_000,
+      }),
+    )
+    expect(verificationCapture.ok).toBe(true)
+    expect(verificationCapture.data.issueReproduced).toBe(false)
+    expect(
+      parse(
+        await harness.executeTool("debug_run_finish", {
+          runId: postFix.data.runId,
+          status: "completed",
+          issueReproduced: false,
+          observationSource: "deterministic",
+          observation: "The same runtime path now reports the expected value",
+        }),
+      ).ok,
+    ).toBe(true)
     const cleaned = parse(
       await harness.executeTool("debug_cleanup", {
         reason: "completed",
         finalReport: {
           outcome: "completed",
-          rootCause: "The observed value is available at runtime",
+          rootCause: "The runtime value is 42 and is available at runtime",
           decidingEvidence: [evidence.data.events[0].eventId],
-          hypotheses: [{ id: "hyp_value", status: "confirmed", statement: "The runtime value is 42" }],
-          fix: "No behavioral change required",
-          changedFiles: [],
-          verification: ["probe reported 42"],
+          hypotheses: [
+            { id: "hyp_value", status: "confirmed", statement: "The runtime value is 42" },
+            { id: "hyp_missing", status: "eliminated", statement: "The runtime value is missing" },
+          ],
+          fix: "Use the observed runtime value and retain the evidence-backed behavior",
+          changedFiles: ["workflow.mjs"],
+          verification: [`probe reported 42 ${verificationCapture.data.resultEvidenceId}`],
         },
       }),
     )
+    expect(cleaned.ok, JSON.stringify(cleaned)).toBe(true)
     expect(cleaned.data.status).toBe("complete")
-    expect(await readFile(sourcePath, "utf8")).toBe("const observed = 42\n\n")
-  })
+    expect(await readFile(sourcePath, "utf8")).toContain("evidence-backed behavior retained")
+  }, 15_000)
 })

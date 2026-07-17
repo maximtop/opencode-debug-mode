@@ -19,7 +19,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
     debug: {
       mode: string
       permission: { question: string; plan_enter: string; plan_exit: string }
-      tools: { question: boolean }
+      tools: Record<string, boolean>
     }
   }
   command: { debug: { agent: string; template: string } }
@@ -83,7 +83,7 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
     })
     let agentDetails: {
       permission?: Array<{ permission?: unknown; action?: unknown }>
-      tools?: { question?: unknown }
+      tools?: Record<string, unknown>
     }
     try {
       agentDetails = JSON.parse(resolvedAgent.stdout) as typeof agentDetails
@@ -106,7 +106,9 @@ export async function installPackedPluginAndReadConfig(version: string): Promise
             plan_enter: permissionAction("plan_enter"),
             plan_exit: permissionAction("plan_exit"),
           },
-          tools: { question: agentDetails.tools?.question === true },
+          tools: Object.fromEntries(
+            Object.entries(agentDetails.tools ?? {}).map(([name, enabled]) => [name, enabled === true]),
+          ),
         },
       },
       command: { debug: { agent: String(command.agent), template: String(command.template) } },

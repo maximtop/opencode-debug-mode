@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { atomicWriteJson } from "../../src/session/atomic-json.js"
 import { withTempProject } from "../helpers/temp-project.js"
@@ -17,5 +18,12 @@ describe("atomic JSON", () => {
       await expect(atomicWriteJson(`${paths.sessionDir}/large.json`, { value: "too large" }, 4)).rejects.toBeInstanceOf(
         RangeError,
       )
+    }))
+
+  it("removes its temporary path when opening the destination fails", () =>
+    withTempProject(async ({ paths }) => {
+      await expect(
+        atomicWriteJson(path.join(paths.sessionDir, "missing", "value.json"), { revision: 1 }, 128),
+      ).rejects.toMatchObject({ code: "ENOENT" })
     }))
 })

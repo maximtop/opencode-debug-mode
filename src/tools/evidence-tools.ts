@@ -10,7 +10,7 @@ export function createEvidenceReadTool(
   evidenceFor: (session: DebugSession) => EvidenceStore,
 ): ToolDefinition {
   return tool({
-    description: "Read a bounded filtered page of sanitized local evidence",
+    description: "Read sanitized runtime evidence and stable eventId values required to authorize a behavioral fix",
     args: {
       runId: schema.string().optional(),
       hypothesisId: schema.string().optional(),

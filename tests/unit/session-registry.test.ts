@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
@@ -8,6 +8,36 @@ import { projectContextFixture, registryFixture } from "../helpers/factories.js"
 import { FakeClock } from "../helpers/fake-clock.js"
 
 describe("session registry", () => {
+  it("waits for an in-flight session start before serving parallel lifecycle tools", async () => {
+    const registry = await registryFixture(new FakeClock("2026-07-13T00:00:00.000Z"))
+    const starting = registry.start("parallel", projectContextFixture())
+    const reading = registry.requireOwned("parallel")
+
+    const [started, read] = await Promise.all([starting, reading])
+
+    expect(read.publicId).toBe(started.publicId)
+  })
+
+  it("settles in-flight starts during close without retaining a session directory", async () => {
+    const container = await mkdtemp(path.join(tmpdir(), "opencode-debug-registry-close-start-"))
+    onTestFinished(() => rm(container, { recursive: true, force: true }))
+    const project = path.join(container, "project")
+    const sessions = path.join(container, "sessions")
+    await mkdir(project)
+    const registry = new SessionRegistry(sessions)
+
+    const starting = registry.start("closing", { directory: project, worktree: project })
+    await Promise.all([registry.closeAll(), registry.closeAll()])
+
+    await expect(starting).rejects.toMatchObject({ code: "NO_ACTIVE_SESSION" })
+    const entries = await readdir(sessions).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return []
+      throw error
+    })
+    expect(entries.filter((entry) => entry.startsWith("session-"))).toEqual([])
+    expect(registry.listActive()).toEqual([])
+  })
+
   it("isolates trusted OpenCode sessions and rehydrates the matching one", async () => {
     const clock = new FakeClock("2026-07-13T00:00:00.000Z")
     const first = await registryFixture(clock)

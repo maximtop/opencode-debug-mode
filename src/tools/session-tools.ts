@@ -1,13 +1,14 @@
 import { type ToolDefinition, tool } from "@opencode-ai/plugin"
 import { LIMITS } from "../core/constants.js"
+import type { PackageDiagnostics } from "../core/package-metadata.js"
 import type { SessionRegistry } from "../session/registry.js"
 import { jsonFailure, jsonSuccess } from "./common.js"
 
 const schema = tool.schema
 
-export function createSessionStartTool(registry: SessionRegistry): ToolDefinition {
+export function createSessionStartTool(registry: SessionRegistry, diagnostics?: PackageDiagnostics): ToolDefinition {
   return tool({
-    description: "Start an isolated runtime-debugging session",
+    description: "MANDATORY FIRST LIFECYCLE TOOL: start an isolated runtime-debugging session before file mutations",
     args: {
       keepArtifacts: schema.boolean().default(false),
       retentionDestination: schema.string().min(1).max(8_192).optional(),
@@ -27,6 +28,7 @@ export function createSessionStartTool(registry: SessionRegistry): ToolDefinitio
           status: "active",
           limits: LIMITS,
           capabilities: { process: true, web: true, extension: true, languages: ["javascript", "typescript"] },
+          ...(diagnostics === undefined ? {} : { plugin: diagnostics }),
         })
       } catch (error) {
         return jsonFailure(error, "Debug session could not be started")
@@ -35,7 +37,7 @@ export function createSessionStartTool(registry: SessionRegistry): ToolDefinitio
   })
 }
 
-export function createSessionStatusTool(registry: SessionRegistry): ToolDefinition {
+export function createSessionStatusTool(registry: SessionRegistry, diagnostics?: PackageDiagnostics): ToolDefinition {
   return tool({
     description: "Read the public status of the active debug session",
     args: {},
@@ -57,6 +59,7 @@ export function createSessionStatusTool(registry: SessionRegistry): ToolDefiniti
           probeCount: manifest.probes.length,
           counters: manifest.counters,
           limits: LIMITS,
+          ...(diagnostics === undefined ? {} : { plugin: diagnostics }),
         })
       } catch (error) {
         return jsonFailure(error, "Debug session status is unavailable")

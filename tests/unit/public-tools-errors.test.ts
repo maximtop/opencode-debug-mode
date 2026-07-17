@@ -31,6 +31,16 @@ describe("public tool errors", () => {
       ["debug_state_checkpoint", { expectedRevision: 0, state: {} }],
       ["debug_run_start", { label: "pre-fix", reproduction: "fixture", waitingForUser: false }],
       [
+        "debug_run_finish",
+        {
+          runId: "run_missing",
+          status: "cancelled",
+          issueReproduced: null,
+          observationSource: "deterministic",
+          observation: "not active",
+        },
+      ],
+      [
         "debug_process_capture",
         {
           approvalClass: "local-deterministic",
@@ -44,7 +54,7 @@ describe("public tool errors", () => {
           timeoutMs: 100,
         },
       ],
-      ["debug_collector_start", { runtime: "web" }],
+      ["debug_collector_start", { runtime: "web", transportTargetPath: "debug-transport.mjs" }],
       [
         "debug_probe_prepare",
         {
@@ -59,6 +69,7 @@ describe("public tool errors", () => {
         },
       ],
       ["debug_probe_register", { probeId: "probe_missing" }],
+      ["debug_probe_remove", { probeId: "probe_missing" }],
       ["debug_evidence_read", { limit: 10 }],
       ["debug_cleanup", { reason: "abandoned", finalReport: report }],
     ]
@@ -79,6 +90,7 @@ describe("public tool errors", () => {
     const activeState = {
       ...state,
       phase: "hypotheses",
+      reproduction: { method: "fixture", requiresUser: false, confirmed: null },
       hypotheses: [
         {
           id: "hyp_active",
@@ -89,21 +101,48 @@ describe("public tool errors", () => {
           status: "open",
           evidenceRefs: [],
         },
+        {
+          id: "hyp_secondary",
+          rank: 2,
+          statement: "secondary fixture",
+          confirmationSignals: ["secondary yes"],
+          eliminationSignals: ["secondary no"],
+          status: "open",
+          evidenceRefs: [],
+        },
       ],
     }
     expect(
       parse(await harness.executeTool("debug_state_checkpoint", { expectedRevision: 0, state: activeState })).ok,
     ).toBe(true)
+    await harness.selectAgent("debug")
+    await harness.completeText(
+      "## Working hypotheses\n1. hyp_active — fixture; confirm: yes; eliminate: no.\n2. hyp_secondary — secondary fixture; confirm: secondary yes; eliminate: secondary no.",
+    )
     expect(
       parse(await harness.executeTool("debug_state_checkpoint", { expectedRevision: 99, state })).error?.code,
     ).toBe("STALE_REVISION")
     const run = parse(
       await harness.executeTool("debug_run_start", {
         label: "pre-fix",
-        reproduction: "fixture",
-        waitingForUser: false,
+        reproduction: "agent-paraphrased fixture",
+        waitingForUser: true,
       }),
     )
+    expect(run).toMatchObject({
+      ok: true,
+      data: { status: "running" },
+      warnings: [{ code: "RUN_INPUT_CANONICALIZED" }],
+    })
+    const beforeInstrumentation = parse(await harness.executeTool("debug_state_read", {})).data?.state
+    expect(
+      parse(
+        await harness.executeTool("debug_state_checkpoint", {
+          expectedRevision: beforeInstrumentation.revision,
+          state: { ...beforeInstrumentation, phase: "instrumenting" },
+        }),
+      ).ok,
+    ).toBe(true)
     expect(
       parse(
         await harness.executeTool("debug_probe_prepare", {
@@ -121,11 +160,29 @@ describe("public tool errors", () => {
     expect(parse(await harness.executeTool("debug_probe_register", { probeId: "probe_missing" })).error?.code).toBe(
       "MARKER_MISSING",
     )
-
-    expect(parse(await harness.executeTool("debug_collector_start", { runtime: "web" })).ok).toBe(true)
-    expect(parse(await harness.executeTool("debug_collector_start", { runtime: "web" })).error?.code).toBe(
-      "COLLECTOR_EXISTS",
+    expect(parse(await harness.executeTool("debug_probe_remove", { probeId: "probe_missing" })).error?.code).toBe(
+      "MARKER_MISSING",
     )
+
+    expect(parse(await harness.executeTool("debug_collector_start", { runtime: "web" })).error?.code).toBe(
+      "HELPER_PATH_UNSAFE",
+    )
+    expect(
+      parse(
+        await harness.executeTool("debug_collector_start", {
+          runtime: "web",
+          transportTargetPath: "debug-transport.mjs",
+        }),
+      ).ok,
+    ).toBe(true)
+    expect(
+      parse(
+        await harness.executeTool("debug_collector_start", {
+          runtime: "web",
+          transportTargetPath: "another-debug-transport.mjs",
+        }),
+      ).error?.code,
+    ).toBe("COLLECTOR_EXISTS")
 
     await writeFile(path.join(harness.projectRoot, "noop.mjs"), "void 0\n")
     const denied = parse(
@@ -146,6 +203,6 @@ describe("public tool errors", () => {
         { ask: vi.fn().mockRejectedValue(new Error("denied")) },
       ),
     )
-    expect(denied.error?.code).toBe("COMMAND_REQUIRES_APPROVAL")
+    expect(denied.error?.code).toBe("INVALID_PHASE")
   })
 })

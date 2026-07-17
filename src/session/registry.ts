@@ -36,6 +36,7 @@ export type RegistryCleanup = (session: DebugSession, reason: "idle-expired") =>
 
 export class SessionRegistry {
   private readonly sessions = new Map<string, MutableSession>()
+  private readonly starting = new Map<string, Promise<MutableSession>>()
   private readonly timer: NodeJS.Timeout
   private closed = false
 
@@ -61,58 +62,69 @@ export class SessionRegistry {
       throw new DebugModeError("DESTINATION_REQUIRED", "An explicit retention destination is required")
     }
     const hash = trustedSessionHash(trustedId)
-    if (this.sessions.has(hash) || (await this.findPersisted(hash)) !== undefined) {
+    if (this.sessions.has(hash) || this.starting.has(hash)) {
       throw new DebugModeError("SESSION_EXISTS", "A debug session already exists for this OpenCode session")
     }
 
-    const projectRoot = await realpath(context.worktree)
-    const directory = await realpath(context.directory)
-    if (directory !== projectRoot && !isContained(projectRoot, directory)) {
-      throw new DebugModeError("STORAGE_UNAVAILABLE", "The active directory is outside the worktree")
-    }
-
-    let paths: SessionPaths | undefined
-    try {
-      paths = await createSessionPaths(this.tempBase, projectRoot)
-      const secretStore = new SecretStore(paths.secretFile)
-      const secret = await secretStore.create()
-      const publicId = `session_${randomBytes(16).toString("base64url")}`
-      const manifestStore = new ManifestStore(paths.manifestFile)
-      const investigationStore = new InvestigationStore(paths.stateFile, this.clock)
-      const now = this.clock.now().toISOString()
-      await manifestStore.create(
-        createInitialManifest({
-          sessionId: publicId,
-          trustedSessionHash: hash,
-          projectRoot,
-          sessionDir: paths.sessionDir,
-          now,
-          keepArtifacts: options.keepArtifacts ?? false,
-          ...(options.retentionDestination === undefined
-            ? {}
-            : { retentionDestination: path.resolve(options.retentionDestination) }),
-        }),
-      )
-      await investigationStore.create(initialInvestigationState(now))
-      const session: MutableSession = {
-        publicId,
-        trustedHash: hash,
-        projectRoot,
-        directory,
-        paths,
-        manifestStore,
-        investigationStore,
-        secretStore,
-        secret,
-        leases: new Map(),
+    const operation = (async (): Promise<MutableSession> => {
+      if ((await this.findPersisted(hash)) !== undefined) {
+        throw new DebugModeError("SESSION_EXISTS", "A debug session already exists for this OpenCode session")
       }
-      this.sessions.set(hash, session)
-      return session
-    } catch (error) {
-      if (paths !== undefined) await rm(paths.sessionDir, { recursive: true, force: true }).catch(() => undefined)
-      if (error instanceof DebugModeError) throw error
-      throw new DebugModeError("STORAGE_UNAVAILABLE", "The debug session could not be initialized")
-    }
+      const projectRoot = await realpath(context.worktree)
+      const directory = await realpath(context.directory)
+      if (directory !== projectRoot && !isContained(projectRoot, directory)) {
+        throw new DebugModeError("STORAGE_UNAVAILABLE", "The active directory is outside the worktree")
+      }
+
+      let paths: SessionPaths | undefined
+      try {
+        paths = await createSessionPaths(this.tempBase, projectRoot)
+        const secretStore = new SecretStore(paths.secretFile)
+        const secret = await secretStore.create()
+        const publicId = `session_${randomBytes(16).toString("base64url")}`
+        const manifestStore = new ManifestStore(paths.manifestFile)
+        const investigationStore = new InvestigationStore(paths.stateFile, this.clock)
+        const now = this.clock.now().toISOString()
+        await manifestStore.create(
+          createInitialManifest({
+            sessionId: publicId,
+            trustedSessionHash: hash,
+            projectRoot,
+            sessionDir: paths.sessionDir,
+            now,
+            keepArtifacts: options.keepArtifacts ?? false,
+            ...(options.retentionDestination === undefined
+              ? {}
+              : { retentionDestination: path.resolve(options.retentionDestination) }),
+          }),
+        )
+        await investigationStore.create(initialInvestigationState(now))
+        const session: MutableSession = {
+          publicId,
+          trustedHash: hash,
+          projectRoot,
+          directory,
+          paths,
+          manifestStore,
+          investigationStore,
+          secretStore,
+          secret,
+          leases: new Map(),
+        }
+        this.assertOpen()
+        this.sessions.set(hash, session)
+        return session
+      } catch (error) {
+        if (paths !== undefined) await rm(paths.sessionDir, { recursive: true, force: true }).catch(() => undefined)
+        if (error instanceof DebugModeError) throw error
+        throw new DebugModeError("STORAGE_UNAVAILABLE", "The debug session could not be initialized")
+      }
+    })()
+    const tracked = operation.finally(() => {
+      if (this.starting.get(hash) === tracked) this.starting.delete(hash)
+    })
+    this.starting.set(hash, tracked)
+    return tracked
   }
 
   async requireOwned(trustedId: string): Promise<DebugSession> {
@@ -120,8 +132,11 @@ export class SessionRegistry {
     const hash = trustedSessionHash(trustedId)
     const inMemory = this.sessions.get(hash)
     if (inMemory !== undefined) return inMemory
+    const starting = this.starting.get(hash)
+    if (starting !== undefined) return starting
     const persisted = await this.findPersisted(hash)
     if (persisted === undefined) throw new DebugModeError("NO_ACTIVE_SESSION", "No active debug session exists")
+    this.assertOpen()
     this.sessions.set(hash, persisted)
     return persisted
   }
@@ -201,10 +216,19 @@ export class SessionRegistry {
     this.sessions.delete(trustedSessionHash(trustedId))
   }
 
+  forgetSession(session: Pick<DebugSession, "publicId" | "trustedHash">): void {
+    const current = this.sessions.get(session.trustedHash)
+    if (current?.publicId === session.publicId) this.sessions.delete(session.trustedHash)
+  }
+
   async closeAll(): Promise<void> {
-    if (this.closed) return
-    this.closed = true
-    clearInterval(this.timer)
+    if (!this.closed) {
+      this.closed = true
+      clearInterval(this.timer)
+    }
+    const starting = [...this.starting.values()]
+    await Promise.allSettled(starting)
+    this.starting.clear()
     this.sessions.clear()
   }
 

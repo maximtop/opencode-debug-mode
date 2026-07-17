@@ -1,0 +1,8 @@
+{
+  "name": "opencode-debug-mode-feature-flag-bug-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/feature-flags.test.mjs"
+  }
+}

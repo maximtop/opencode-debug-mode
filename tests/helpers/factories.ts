@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -15,6 +15,7 @@ import type { Clock } from "../../src/core/clock.js"
 import { EVENT_SCHEMA_VERSION, LIMITS, PROCESS_EVENT_PREFIX } from "../../src/core/constants.js"
 import { DebugModeError } from "../../src/core/errors.js"
 import { EvidenceStore } from "../../src/evidence/store.js"
+import { hypothesisSemanticFingerprint } from "../../src/investigation/lifecycle-receipts.js"
 import { initialInvestigationState } from "../../src/investigation/store.js"
 import { createDebugModePlugin } from "../../src/plugin.js"
 import { addLoopbackPermission, removeLoopbackPermission } from "../../src/probes/extension-permissions.js"
@@ -108,7 +109,13 @@ export function projectContextFixture(): ProjectContext {
 
 const execFileAsync = promisify(execFile)
 
-export async function createProcessServiceFixture() {
+export async function createProcessServiceFixture(
+  options: {
+    nodeExecutable?: string
+    resolveExecutable?: (name: string) => string | undefined
+    forkSupervisor?: typeof import("node:child_process").fork
+  } = {},
+) {
   try {
     await access(path.resolve("dist/process-supervisor.js"))
   } catch {
@@ -130,6 +137,7 @@ export async function createProcessServiceFixture() {
     evidence,
     acquireLease: () => registry.acquireLease(trustedId, "process"),
     supervisorPath: path.resolve("dist/process-supervisor.js"),
+    ...options,
   })
   const scriptPath = path.join(projectRoot, "emit-output-and-probe.mjs")
   const event = {
@@ -167,6 +175,7 @@ export function processArgsFixture(overrides: Record<string, unknown> = {}) {
   return {
     approvalClass: "local-deterministic" as const,
     purpose: "reproduction" as const,
+    outcomePredicate: { kind: "exit-code" as const, operator: "not-equals" as const, value: 0 },
     probeIds: [],
     executable: process.execPath,
     args: ["--version"],
@@ -207,12 +216,18 @@ export function toolDependenciesFixture(): RunToolDependencies {
         stdoutEvents: 0,
         stderrEvents: 0,
         probeEvents: 0,
+        probeIds: [],
+        matchingProbeEvents: 0,
+        issueReproduced: true,
+        outcomePredicate: { kind: "exit-code", operator: "not-equals", value: 0 },
+        resultEvidenceId: "event_process_fixture",
       }),
     }),
     probesFor: () => ({
       validate: vi.fn().mockResolvedValue(undefined),
       requireValidatedForRun: vi.fn().mockResolvedValue(undefined),
     }),
+    capturePolicy: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -397,6 +412,7 @@ export async function extensionManifestFixture(options: { manifestVersion: numbe
   await writeFile(manifestPath, `${JSON.stringify(initial, null, 2)}\n`)
   onTestFinished(async () => rm(container, { recursive: true, force: true }))
   return {
+    root: container,
     path: manifestPath,
     matchPattern: "http://127.0.0.1:32123/*",
     read: () => readFile(manifestPath, "utf8"),
@@ -490,7 +506,7 @@ export async function createCleanupFixture(options: {
     options.keepArtifacts === true ? { keepArtifacts: true, retentionDestination } : {},
   )
   await writeFile(session.paths.evidenceFile, "")
-  const sourceFile = path.join(projectRoot, "example.js")
+  const sourceFile = path.join(session.projectRoot, "example.js")
   const markerStart = "/* DEBUG-START opencode-debug-mode session=session_A run=run_A hypothesis=hyp_A probe=probe_A */"
   const markerEnd = "/* DEBUG-END opencode-debug-mode session=session_A run=run_A hypothesis=hyp_A probe=probe_A */"
   const expectedBlock = `${markerStart}\nvoid 0\n${markerEnd}\n`
@@ -568,7 +584,7 @@ export async function createCleanupFixture(options: {
     cleanup,
     finalReport,
     session,
-    projectRoot,
+    projectRoot: session.projectRoot,
     sourceFile,
     retentionDestination,
     removeSecret,
@@ -678,13 +694,14 @@ export function publicToolsFixture() {
 
 export async function pluginHarness(plugin?: Plugin, options: { activeSessions?: string[] } = {}) {
   const container = await mkdtemp(path.join(tmpdir(), "opencode-debug-plugin-"))
+  const projectRoot = await realpath(container)
   const selectedPlugin = plugin ?? createDebugModePlugin({ tempBase: path.join(container, "sessions") })
   const client = { app: { log: vi.fn().mockResolvedValue({}) } }
   const hooks = await selectedPlugin({
     client,
     project: {} as never,
-    directory: container,
-    worktree: container,
+    directory: projectRoot,
+    worktree: projectRoot,
     experimental_workspace: { register: vi.fn() },
     serverUrl: new URL("http://127.0.0.1"),
     $: {} as never,
@@ -692,7 +709,7 @@ export async function pluginHarness(plugin?: Plugin, options: { activeSessions?:
   for (const sessionID of options.activeSessions ?? []) {
     await hooks.tool?.debug_session_start?.execute(
       { keepArtifacts: false },
-      toolContextFixture({ sessionID, directory: container, worktree: container }),
+      toolContextFixture({ sessionID, directory: projectRoot, worktree: projectRoot }),
     )
   }
   const cleanup = vi.fn().mockResolvedValue(undefined)
@@ -704,7 +721,7 @@ export async function pluginHarness(plugin?: Plugin, options: { activeSessions?:
     await rm(container, { recursive: true, force: true })
   })
   return {
-    projectRoot: container,
+    projectRoot,
     clientLog: client.app.log,
     cleanup,
     registry: { closeAll },
@@ -735,10 +752,46 @@ export async function pluginHarness(plugin?: Plugin, options: { activeSessions?:
       toolCalls.push(name)
       return definition.execute(
         args,
-        toolContextFixture({ sessionID, directory: container, worktree: container, ...contextOverrides }),
+        toolContextFixture({ sessionID, directory: projectRoot, worktree: projectRoot, ...contextOverrides }),
       )
     },
     toolCalls,
+    selectAgent: async (agent: string, sessionID = "session-A") => {
+      await hooks["chat.message"]?.({ sessionID, agent } as never, { message: {} as never, parts: [] })
+      await hooks["chat.params"]?.(
+        { sessionID, agent, model: {} as never, provider: {} as never, message: {} as never },
+        { temperature: 0, topP: 1, topK: 0, maxOutputTokens: undefined, options: {} },
+      )
+    },
+    beforeTool: async (tool: string, args: Record<string, unknown>, sessionID = "session-A") => {
+      const output = { args }
+      await hooks["tool.execute.before"]?.({ tool, sessionID, callID: "call-fixture" }, output)
+      return output.args
+    },
+    afterTool: async (
+      tool: string,
+      metadata: Record<string, unknown> = {},
+      sessionID = "session-A",
+      callID = "call-fixture",
+      args: Record<string, unknown> = {},
+    ) => {
+      const output = { title: tool, output: "", metadata }
+      await hooks["tool.execute.after"]?.({ tool, sessionID, callID, args }, output)
+      return output
+    },
+    completeText: async (text: string, sessionID = "session-A") => {
+      const output = { text }
+      await hooks["experimental.text.complete"]?.(
+        { sessionID, messageID: "message-fixture", partID: "part-fixture" },
+        output,
+      )
+      return output.text
+    },
+    systemContext: async (sessionID = "session-A") => {
+      const output = { system: [] as string[] }
+      await hooks["experimental.chat.system.transform"]?.({ sessionID, model: {} as never }, output)
+      return output.system
+    },
     compact: async (sessionID = "session-A") => {
       const output = { context: [] as string[] }
       await hooks["experimental.session.compacting"]?.({ sessionID } as never, output)
@@ -809,7 +862,8 @@ export async function runCliDebugFixture() {
   const runs = new RunService(session.manifestStore)
   const probes = new ProbeRegistry(session.manifestStore, session.projectRoot, async (id) => {
     const checkpoint = await session.investigationStore.read()
-    return checkpoint.hypotheses.some((hypothesis) => hypothesis.id === id)
+    const hypothesis = checkpoint.hypotheses.find((candidate) => candidate.id === id)
+    return hypothesis === undefined ? undefined : hypothesisSemanticFingerprint(hypothesis)
   })
   const evidence = new EvidenceStore(session.paths.evidenceFile)
   const processes = new ProcessService({
@@ -838,6 +892,19 @@ export async function runCliDebugFixture() {
     })
     const current = await readFile(discountFile, "utf8")
     await writeFile(discountFile, current.replace("  return isVip", `${probe.markerBlock}\n  return isVip`))
+    const ownedBlock = `${probe.markerBlock}\n`
+    await session.manifestStore.modify((manifest) => ({
+      ...manifest,
+      probes: manifest.probes.map((candidate) =>
+        candidate.id === probe.id
+          ? {
+              ...candidate,
+              expectedBlock: ownedBlock,
+              expectedHash: createHash("sha256").update(ownedBlock).digest("hex"),
+            }
+          : candidate,
+      ),
+    }))
     await probes.register(probe.id)
     await probes.validate([probe.id])
     await processes.capture({
@@ -946,6 +1013,12 @@ export async function runHumanReproductionFixture(options: {
   if (options.transport === "extension-content" && template.markerBlock.includes("fetch(")) {
     throw new Error("Content probe must not fetch loopback")
   }
+  const helperImportOwnership =
+    "opencode-debug-mode session=session_A run=run_A hypothesis=hyp_A probe=probe_A resource=transport-import"
+  const helperImportBlock =
+    `/* DEBUG-START ${helperImportOwnership} */\n` +
+    `${helperResult.requiredImport}\n` +
+    `/* DEBUG-END ${helperImportOwnership} */`
 
   if (options.fixture === "web") {
     targetPath = path.join(projectRoot, "app.mjs")
@@ -953,7 +1026,7 @@ export async function runHumanReproductionFixture(options: {
     const fixtureSource = await readFile(path.resolve("fixtures/web-bug/app.js"), "utf8")
     await writeFile(
       targetPath,
-      `${helperResult.requiredImport}\n${fixtureSource.replace("  return", `  ${template.markerBlock}\n  return`)}`,
+      `${helperImportBlock}\n${fixtureSource.replace("  return", `  ${template.markerBlock}\n  return`)}`,
     )
     requiredImportPath = targetPath
     await writeFile(
@@ -969,7 +1042,7 @@ export async function runHumanReproductionFixture(options: {
     await writeFile(manifestPath, await readFile(path.join(fixtureRoot, "manifest.json"), "utf8"))
     await writeFile(
       backgroundPath,
-      `${helperResult.requiredImport}\n${await readFile(path.join(fixtureRoot, "background.js"), "utf8")}`,
+      `${helperImportBlock}\n${await readFile(path.join(fixtureRoot, "background.js"), "utf8")}`,
     )
     requiredImportPath = backgroundPath
     const content = await readFile(path.join(fixtureRoot, "content.js"), "utf8")
@@ -978,7 +1051,7 @@ export async function runHumanReproductionFixture(options: {
       content.replace(/\n(?=(?:chrome|browser)\.runtime\.sendMessage)/u, `\n${template.markerBlock}\n`),
     )
     const host = handle.host === "::1" ? `[::1]` : handle.host
-    permissionChange = await addLoopbackPermission(manifestPath, `http://${host}:${handle.port}/*`)
+    permissionChange = await addLoopbackPermission(projectRoot, manifestPath, `http://${host}:${handle.port}/*`)
     const namespace = options.fixture === "chrome-mv3" ? "chrome" : "browser"
     await writeFile(
       runnerPath,
@@ -1026,19 +1099,22 @@ await new Promise((resolve) => setTimeout(resolve, 100))
     markerEnd: template.markerBlock.split("\n").at(-1) ?? "",
     expectedBlock: template.markerBlock,
     expectedHash: createHash("sha256").update(template.markerBlock).digest("hex"),
+    ...(requiredImportPath === undefined
+      ? {}
+      : {
+          helperSourceFile: requiredImportPath,
+          helperImportBlock,
+          helperImportHash: createHash("sha256").update(helperImportBlock).digest("hex"),
+        }),
   }
-  const markerResult = await removeOwnedProbe(markerProbe)
-  if (requiredImportPath !== undefined) {
-    const source = await readFile(requiredImportPath, "utf8")
-    await writeFile(requiredImportPath, source.replace(`${helperResult.requiredImport}\n`, ""))
-  }
+  const markerResult = await removeOwnedProbe(markerProbe, projectRoot)
   const helperContent = await readFile(helperPath)
   const helperMatches = createHash("sha256").update(helperContent).digest("hex") === helperResult.sha256
   if (helperMatches) await rm(helperPath)
   const permissionResult =
     permissionChange === undefined
       ? { status: "already-clean" as const }
-      : await removeLoopbackPermission(permissionChange.manifestPath, permissionChange)
+      : await removeLoopbackPermission(projectRoot, permissionChange.manifestPath, permissionChange)
   const checkTargets = [targetPath, runnerPath, ...(requiredImportPath === undefined ? [] : [requiredImportPath])]
   const checks = await Promise.all(
     checkTargets.map((filename) =>
