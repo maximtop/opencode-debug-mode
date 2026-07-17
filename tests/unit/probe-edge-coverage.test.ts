@@ -348,7 +348,7 @@ describe("probe edge coverage", () => {
 
   it("closes pinned roots on invalid create and rewrite paths", () =>
     withTempProject(async ({ root, paths }) => {
-      const outside = path.join(root, "outside.ts")
+      const outside = path.join(path.dirname(paths.projectRoot), "outside.ts")
       await expect(createCanonicalProjectFile(paths.projectRoot, outside, "owned\n")).rejects.toMatchObject({
         code: "HELPER_PATH_UNSAFE",
       })
